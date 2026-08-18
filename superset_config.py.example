@@ -1,0 +1,47 @@
+# Copy this file to superset_config.py and fill in real values for your
+# environment. superset_config.py itself is gitignored -- never commit it,
+# it ends up holding live secrets and DB credentials.
+
+SUPERSET_WEBSERVER_PORT = 8089
+WEBDRIVER_BASEURL = "http://localhost:8089/"
+WEBDRIVER_BASEURL_USER_FRIENDLY = "http://localhost:8089/"
+
+# Session signing key. Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+SECRET_KEY = "CHANGE_ME"
+
+# PostgreSQL database connection
+SQLALCHEMY_DATABASE_URI = "postgresql://<user>:<password>@<host>:5432/<database>"
+
+# SQLAlchemy engine options for better transaction handling
+SQLALCHEMY_ENGINE_OPTIONS = {
+    "isolation_level": "READ_COMMITTED",
+    "connect_args": {"connect_timeout": 10},
+}
+
+# Disable FAB auto-table creation to use Flask-Migrate instead (SQLAlchemy 2.0 compatible)
+SQLALCHEMY_TRACK_MODIFICATIONS = False
+FAB_ADD_SECURITY_TABLES = False
+
+FEATURE_FLAGS = {
+    "EMBEDDED_SUPERSET": True,
+}
+
+# Guest tokens (used by embedded dashboards) are granted the "Public" role.
+# Without this, Public has zero permissions and every embedded/guest
+# request is rejected with a generic 403. This mirrors it to Gamma's
+# permission set; re-run `superset init` after changing this.
+PUBLIC_ROLE_LIKE = "Gamma"
+
+# The stock default ("test-guest-secret-change-me") is a publicly known
+# string baked into the open-source code -- leaving it unset lets anyone
+# forge a valid guest token and get embedded-dashboard access. Generate
+# with: python -c "import secrets; print(secrets.token_urlsafe(48))"
+GUEST_TOKEN_JWT_SECRET = "CHANGE_ME"  # noqa: S105
+
+# Brute-force / credential-stuffing protection on login and other
+# sensitive endpoints. Off by default outside SUPERSET_ENV=production;
+# enabling explicitly rather than relying on that env var being set.
+RATELIMIT_ENABLED = True
+AUTH_RATE_LIMITED = True
+AUTH_RATE_LIMIT = "5 per minute"

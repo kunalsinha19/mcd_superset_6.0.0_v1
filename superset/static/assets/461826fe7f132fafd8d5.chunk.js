@@ -1,0 +1,14 @@
+"use strict";(globalThis.webpackChunksuperset=globalThis.webpackChunksuperset||[]).push([[583],{583:(e,t,n)=>{n.r(t),n.d(t,{default:()=>d});var a=n(2445),r=n(90924),o=n(74098),i=n(96540),l=n(82384),s=n(2801),u=n(17102);function d(e){const{data:t,formData:n,height:d,width:c,setDataMask:f,setHoveredFilter:h,unsetHoveredFilter:m,setFocusedFilter:p,unsetFocusedFilter:g,setFilterActive:v,filterState:S,inputRef:b}=e,{defaultValue:x}=n,[w,$]=(0,i.useState)(null!=x?x:[]),M=(0,i.useMemo)((()=>t.reduce(((e,{duration:t,name:n})=>({...e,[t]:n})),{})),[JSON.stringify(t)]),F=e=>{const t=(0,r.A)(e),[n]=t,a=n?M[n]:void 0,o={};n&&(o.time_grain_sqla=n),$(t),f({extraFormData:o,filterState:{label:a,value:t.length?t:null}})};(0,i.useEffect)((()=>{F(null!=x?x:[])}),[JSON.stringify(x)]),(0,i.useEffect)((()=>{var e;F(null!=(e=S.value)?e:[])}),[JSON.stringify(S.value)]);const k=0===(t||[]).length?(0,o.t)("No data"):(0,o.tn)("%s option","%s options",t.length,t.length),y={};S.validateMessage&&(y.extra=(0,a.Y)(u.Mo,{status:S.validateStatus,children:S.validateMessage}));const z=(t||[]).map((e=>{const{name:t,duration:n}=e;return{label:t,value:n}}));return(0,a.Y)(u.j3,{height:d,width:c,children:(0,a.Y)(l.e,{validateStatus:S.validateStatus,...y,children:(0,a.Y)(s.A,{name:n.nativeFilterId,allowClear:!0,value:w,placeholder:k,onChange:F,onBlur:g,onFocus:p,onMouseEnter:h,onMouseLeave:m,ref:b,options:z,onOpenChange:v,sortComparator:()=>0})})})}},17102:(e,t,n)=>{n.d(t,{Mo:()=>l,YH:()=>o,j3:()=>i});var a=n(50290),r=n(82384);const o=0,i=a.I4.div`
+  min-height: ${({height:e})=>e}px;
+  width: ${({width:e})=>e===o?"100%":`${e}px`};
+`,l=((0,a.I4)(r.e)`
+  &.ant-row.ant-form-item {
+    margin: 0;
+  }
+`,a.I4.div`
+  color: ${({theme:e,status:t="error"})=>{if("help"===t)return e.colorTextSecondary;switch(t){case"error":default:return e.colorError;case"warning":return e.colorWarning;case"info":return e.colorInfo}}};
+  text-align: ${({centerText:e})=>e?"center":"left"};
+  width: 100%;
+`)},82384:(e,t,n)=>{n.d(t,{e:()=>r});var a=n(89467);const r=(0,n(50290).I4)(a.A.Item)`
+  ${({theme:e})=>`\n    &.ant-form-item > .ant-row > .ant-form-item-label {\n      padding-bottom: ${e.paddingXXS}px;\n    }\n    .ant-form-item-label {\n      & > label {\n        font-size: ${e.fontSizeSM}px;\n        &.ant-form-item-required:not(.ant-form-item-required-mark-optional) {\n          &::before {\n            display: none;\n          }\n          &::after {\n            display: inline-block;\n            visibility: visible;\n            color: ${e.colorError};\n            font-size: ${e.fontSizeSM}px;\n            content: '*';\n          }\n        }\n      }\n    }\n    .ant-form-item-extra {\n      margin-top: ${e.sizeUnit}px;\n      font-size: ${e.fontSizeSM}px;\n    }\n  `}
+`}}]);

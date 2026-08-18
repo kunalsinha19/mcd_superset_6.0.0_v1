@@ -1,0 +1,23 @@
+# Local, secrets-bearing config -- never commit this. Use
+# superset_config.py.example as the template instead.
+superset_config.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend -- unanchored so these match at any depth (this is a monorepo
+# with many packages/*, plugins/* subdirectories, each with their own)
+**/node_modules/
+**/.temp_cache/
+**/coverage/
+**/cypress/screenshots/
+**/cypress/videos/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
