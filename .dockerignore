@@ -1,0 +1,27 @@
+# Never send real secrets into the build context
+superset_config.py
+
+# Not needed -- frontend is already built (superset/static/assets/)
+**/node_modules/
+superset-frontend/src/
+superset-frontend/packages/
+superset-frontend/plugins/
+superset-frontend/.storybook/
+superset-frontend/cypress/
+superset-frontend/spec/
+
+# VCS / editor / caches
+.git/
+.gitignore
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+apache_superset.egg-info/
+
+# Tests -- not needed at runtime
+tests/
+superset-frontend/**/*.test.*
+superset-frontend/**/*.stories.*

@@ -216,6 +216,14 @@ development = [
 homepage = "https://superset.apache.org/"
 documentation = "https://superset.apache.org/docs/intro"
 
+[tool.setuptools.packages.find]
+# Without this, setuptools' flat-layout auto-discovery errors out as soon
+# as any other top-level directory with files exists alongside superset/
+# (e.g. deploy/, superset-frontend/) -- it can't tell which one is "the"
+# package. Restricting discovery to superset* (superset itself and every
+# subpackage, e.g. superset.charts) resolves that ambiguity for good.
+include = ["superset*"]
+
 
 [tool.isort]
 combine_as_imports = true

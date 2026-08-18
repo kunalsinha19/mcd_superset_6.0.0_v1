@@ -1,0 +1,4 @@
+# Shell scripts must always check out with LF line endings, even on
+# Windows -- CRLF breaks the #!/bin/bash shebang when they run inside a
+# Linux container.
+*.sh text eol=lf
