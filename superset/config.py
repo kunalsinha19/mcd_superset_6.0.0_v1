@@ -579,6 +579,13 @@ DEFAULT_FEATURE_FLAGS: dict[str, bool] = {
     "AVOID_COLORS_COLLISION": True,
     # Do not show user info in the menu
     "MENU_HIDE_USER_INFO": False,
+    # Do not show the version/SHA/build number in the About section of the
+    # Settings menu, and don't hand them to the client-side telemetry pixel
+    # either. Defaults to hidden -- exact version fingerprinting is a known
+    # audit finding and this shouldn't depend on a per-environment
+    # superset_config.py override to actually take effect. Set to False to
+    # restore the stock behavior.
+    "MENU_HIDE_VERSION_INFO": True,
     # Allows users to add a ``superset://`` DB that can query across databases. This is
     # an experimental feature with potential security and performance risks, so use with
     # caution. If the feature is enabled you can also set a limit for how much data is

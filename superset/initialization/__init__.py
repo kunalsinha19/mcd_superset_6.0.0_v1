@@ -792,6 +792,22 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
         self.superset_app.url_map.converters["object_type"] = ObjectTypeConverter
 
     def configure_middlewares(self) -> None:  # noqa: C901
+        # Block unauthenticated access to the two static files that
+        # fingerprint the exact Superset version/build (version_info.json
+        # has {"version", "GIT_SHA"}; assets/package.json has "version" plus
+        # every frontend dependency version). Both are served by the default
+        # static route with no auth, and are the first thing automated
+        # scanners check to pin an exact vulnerable version. This only stops
+        # them being served over HTTP -- config.py still reads them straight
+        # off disk at startup for VERSION_STRING/VERSION_SHA, which is
+        # unaffected.
+        hidden_static_paths = {"/static/version_info.json", "/static/assets/package.json"}
+
+        @self.superset_app.before_request
+        def block_version_fingerprint_files() -> None:
+            if request.path in hidden_static_paths:
+                abort(404)
+
         if self.config["ENABLE_CORS"]:
             # pylint: disable=import-outside-toplevel
             from flask_cors import CORS
