@@ -45,3 +45,48 @@ GUEST_TOKEN_JWT_SECRET = "CHANGE_ME"  # noqa: S105
 RATELIMIT_ENABLED = True
 AUTH_RATE_LIMITED = True
 AUTH_RATE_LIMIT = "5 per minute"
+# Needs storage shared across all gunicorn workers -- the in-memory default
+# is per-worker, so with N workers the real limit is effectively N times
+# looser than configured, and a restart silently resets it. Point at Redis:
+# RATELIMIT_STORAGE_URI = "redis://<redis-host>:6379/2"
+#
+# If Redis is ever unreachable, flask-limiter raises on every single
+# request by default -- confirmed the hard way: with this False and Redis
+# down, the app returned a 500 (or "[object Response]" client-side) on
+# every route, including /health. Log the failure and let the request
+# through instead of taking the whole app down over a cache blip:
+RATELIMIT_SWALLOW_ERRORS = True
+
+# ---------------------------------------------------------------------
+# Session cookie -- SameSite/Secure must be set as a matched pair
+# ---------------------------------------------------------------------
+# Modern Chrome/Firefox silently reject a SameSite=None cookie that isn't
+# also Secure -- confirmed the hard way: with SameSite=None and Secure=
+# False (e.g. testing over plain HTTP), the browser never actually kept
+# the session cookie, so every follow-up request looked session-less and
+# Flask-WTF's CSRF check failed on every state-changing call with "The
+# CSRF token is missing" (surfaced client-side as fetch errors on
+# dashboards/charts). Pick based on your actual deployment:
+#   - Same-origin (frontend and API on the same host, the common case):
+#     SESSION_COOKIE_SAMESITE = "Lax"
+#     SESSION_COOKIE_SECURE = True   # once TLS is terminated in front of this app
+#   - Cross-site (a separate frontend origin calling this API with
+#     credentials, e.g. via CORS_OPTIONS supports_credentials=True):
+#     SESSION_COOKIE_SAMESITE = "None"
+#     SESSION_COOKIE_SECURE = True   # required for None to actually work at all
+# Never SameSite=None with Secure=False -- it isn't a relaxed-but-working
+# setting, browsers just drop the cookie and auth breaks in ways that
+# don't obviously point back to this.
+
+# ---------------------------------------------------------------------
+# First admin user on a fresh database
+# ---------------------------------------------------------------------
+# A brand-new DB has no users at all. deploy/entrypoint.sh will create one
+# automatically on first boot if these are set on the container (skips
+# silently if the user already exists, so safe to leave set across
+# restarts) -- see DEPLOYMENT.md:
+#   SUPERSET_ADMIN_USERNAME
+#   SUPERSET_ADMIN_PASSWORD
+#   SUPERSET_ADMIN_EMAIL
+# These are container/host environment variables, not settings in this
+# file.

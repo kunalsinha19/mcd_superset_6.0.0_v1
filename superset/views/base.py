@@ -284,9 +284,21 @@ def menu_data(user: User) -> dict[str, Any]:
             "documentation_url": app.config["DOCUMENTATION_URL"],
             "documentation_icon": app.config["DOCUMENTATION_ICON"],
             "documentation_text": app.config["DOCUMENTATION_TEXT"],
-            "version_string": app.config["VERSION_STRING"],
-            "version_sha": app.config["VERSION_SHA"],
-            "build_number": app.config["BUILD_NUMBER"],
+            "version_string": (
+                None
+                if is_feature_enabled("MENU_HIDE_VERSION_INFO")
+                else app.config["VERSION_STRING"]
+            ),
+            "version_sha": (
+                None
+                if is_feature_enabled("MENU_HIDE_VERSION_INFO")
+                else app.config["VERSION_SHA"]
+            ),
+            "build_number": (
+                None
+                if is_feature_enabled("MENU_HIDE_VERSION_INFO")
+                else app.config["BUILD_NUMBER"]
+            ),
             "languages": languages,
             "show_language_picker": len(languages) > 1,
             "user_is_anonymous": user.is_anonymous,
