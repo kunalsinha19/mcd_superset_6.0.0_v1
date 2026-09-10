@@ -181,7 +181,8 @@ export default function Login() {
               { required: true, message: t('Please enter your password') },
             ]}
           >
-            <Input.Password
+            <Input
+              type="password"
               placeholder={t('Password')}
               autoComplete="new-password"
               data-test="password-input"
@@ -212,7 +213,8 @@ export default function Login() {
               }),
             ]}
           >
-            <Input.Password
+            <Input
+              type="password"
               placeholder={t('Confirm password')}
               data-test="confirm-password-input"
             />

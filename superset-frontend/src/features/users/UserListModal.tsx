@@ -234,7 +234,8 @@ function UserListModal({
                 label={t('Password')}
                 rules={[{ required: true, message: t('Password is required') }]}
               >
-                <Input.Password
+                <Input
+                  type="password"
                   name="password"
                   placeholder="Enter the user's password"
                 />
@@ -260,7 +261,8 @@ function UserListModal({
                   }),
                 ]}
               >
-                <Input.Password
+                <Input
+                  type="password"
                   name="confirmPassword"
                   placeholder={t("Confirm the user's password")}
                 />

@@ -18,16 +18,9 @@
  */
 import { useState } from 'react';
 import { t, styled } from '@superset-ui/core';
-import {
-  Form,
-  FormLabel,
-  Col,
-  Row,
-  Tooltip,
-} from '@superset-ui/core/components';
+import { Form, FormLabel, Col, Row } from '@superset-ui/core/components';
 import { Input } from '@superset-ui/core/components/Input';
 import { Radio } from '@superset-ui/core/components/Radio';
-import { Icons } from '@superset-ui/core/components/Icons';
 import { DatabaseObject, FieldPropTypes } from '../types';
 import { AuthType } from '.';
 
@@ -47,7 +40,11 @@ const StyledFormItem = styled(Form.Item)`
   margin-bottom: 0 !important;
 `;
 
-const StyledInputPassword = styled(Input.Password)`
+// Plain masked input, not Input.Password -- no show/hide toggle that
+// reveals the plaintext password on screen. type="password" is passed at
+// each call site below rather than via .attrs() -- this project's styled()
+// (emotion, not styled-components) doesn't support that API.
+const StyledInputPassword = styled(Input)`
   margin: ${({ theme }) => `${theme.sizeUnit}px 0 ${theme.sizeUnit * 2}px`};
 `;
 
@@ -151,22 +148,12 @@ const SSHTunnelForm = ({
                 {t('SSH Password')}
               </FormLabel>
               <StyledInputPassword
+                type="password"
                 name="password"
                 placeholder={t('e.g. ********')}
                 value={db?.ssh_tunnel?.password || ''}
                 onChange={onSSHTunnelParametersChange}
                 data-test="ssh-tunnel-password-input"
-                iconRender={visible =>
-                  visible ? (
-                    <Tooltip title="Hide password.">
-                      <Icons.EyeInvisibleOutlined />
-                    </Tooltip>
-                  ) : (
-                    <Tooltip title="Show password.">
-                      <Icons.EyeOutlined />
-                    </Tooltip>
-                  )
-                }
                 role="textbox"
               />
             </StyledDiv>
@@ -199,22 +186,12 @@ const SSHTunnelForm = ({
                   {t('Private Key Password')}
                 </FormLabel>
                 <StyledInputPassword
+                  type="password"
                   name="private_key_password"
                   placeholder={t('e.g. ********')}
                   value={db?.ssh_tunnel?.private_key_password || ''}
                   onChange={onSSHTunnelParametersChange}
                   data-test="ssh-tunnel-private_key_password-input"
-                  iconRender={visible =>
-                    visible ? (
-                      <Tooltip title="Hide password.">
-                        <Icons.EyeInvisibleOutlined />
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title="Show password.">
-                        <Icons.EyeOutlined />
-                      </Tooltip>
-                    )
-                  }
                   role="textbox"
                 />
               </StyledDiv>

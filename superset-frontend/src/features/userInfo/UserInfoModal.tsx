@@ -92,7 +92,8 @@ function UserInfoModal({
         label={t('Password')}
         rules={[{ required: true, message: t('Password is required') }]}
       >
-        <Input.Password
+        <Input
+          type="password"
           name="password"
           placeholder="Enter the user's password"
         />
@@ -116,7 +117,8 @@ function UserInfoModal({
           }),
         ]}
       >
-        <Input.Password
+        <Input
+          type="password"
           name="confirm_password"
           placeholder={t("Confirm the user's password")}
         />
