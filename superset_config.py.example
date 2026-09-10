@@ -2,6 +2,8 @@
 # environment. superset_config.py itself is gitignored -- never commit it,
 # it ends up holding live secrets and DB credentials.
 
+import os
+
 SUPERSET_WEBSERVER_PORT = 8089
 WEBDRIVER_BASEURL = "http://localhost:8089/"
 WEBDRIVER_BASEURL_USER_FRIENDLY = "http://localhost:8089/"
@@ -58,8 +60,49 @@ AUTH_RATE_LIMIT = "5 per minute"
 RATELIMIT_SWALLOW_ERRORS = True
 
 # ---------------------------------------------------------------------
-# Session cookie -- SameSite/Secure must be set as a matched pair
+# HTTPS enforcement + session cookie -- secure by default, on purpose
 # ---------------------------------------------------------------------
+# A real deployment of this app was caught in Burp sending username and
+# password in plaintext over HTTP -- no TLS anywhere in the request. Root
+# cause: this used to default to insecure (False) and rely on someone
+# remembering to set an env var on every server. People forget env vars.
+# So the default below is now secure, and skipping TLS requires an
+# explicit, deliberate opt-out -- not the other way around.
+#
+# SESSION_COOKIE_SECURE also drives Talisman's force_https (redirects
+# every HTTP request to HTTPS). A server with this True but no real TLS
+# listener in front of it will *break* over plain HTTP rather than
+# silently serve it -- that's intentional (fail closed), and the fix is
+# to put real TLS in front of it, not to flip this back to unblock
+# things.
+#
+# Only reason to ever set SUPERSET_FORCE_HTTPS=false: a genuine local dev
+# run with no cert (see run_local.py, which is gitignored and sets this
+# explicitly for exactly that one case).
+SESSION_COOKIE_SECURE = os.getenv("SUPERSET_FORCE_HTTPS", "true").lower() == "true"
+
+# SESSION_COOKIE_SECURE above only marks the cookie itself -- it does NOT
+# stop the login form from being served/submitted over plain HTTP in the
+# first place, which is what actually let credentials be captured in
+# cleartext. Talisman's force_https is the setting that does that (302s
+# every HTTP request to HTTPS before any form is ever shown). Wire it to
+# the same flag so they can't drift apart:
+TALISMAN_CONFIG = {
+    "content_security_policy": {
+        "base-uri": ["'self'"],
+        "default-src": ["'self'"],
+        "img-src": ["'self'", "blob:", "data:"],
+        "worker-src": ["'self'", "blob:"],
+        "connect-src": ["'self'"],
+        "object-src": "'none'",
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "script-src": ["'self'", "'strict-dynamic'"],
+    },
+    "content_security_policy_nonce_in": ["script-src"],
+    "force_https": SESSION_COOKIE_SECURE,
+    "session_cookie_secure": SESSION_COOKIE_SECURE,
+}
+
 # Modern Chrome/Firefox silently reject a SameSite=None cookie that isn't
 # also Secure -- confirmed the hard way: with SameSite=None and Secure=
 # False (e.g. testing over plain HTTP), the browser never actually kept
@@ -68,15 +111,15 @@ RATELIMIT_SWALLOW_ERRORS = True
 # CSRF token is missing" (surfaced client-side as fetch errors on
 # dashboards/charts). Pick based on your actual deployment:
 #   - Same-origin (frontend and API on the same host, the common case):
-#     SESSION_COOKIE_SAMESITE = "Lax"
-#     SESSION_COOKIE_SECURE = True   # once TLS is terminated in front of this app
+SESSION_COOKIE_SAMESITE = "Lax"
 #   - Cross-site (a separate frontend origin calling this API with
-#     credentials, e.g. via CORS_OPTIONS supports_credentials=True):
+#     credentials, e.g. via CORS_OPTIONS supports_credentials=True) --
+#     use this instead of the Lax line above:
 #     SESSION_COOKIE_SAMESITE = "None"
-#     SESSION_COOKIE_SECURE = True   # required for None to actually work at all
 # Never SameSite=None with Secure=False -- it isn't a relaxed-but-working
 # setting, browsers just drop the cookie and auth breaks in ways that
-# don't obviously point back to this.
+# don't obviously point back to this. Since SESSION_COOKIE_SECURE now
+# defaults True above, that pairing is already satisfied by default.
 
 # ---------------------------------------------------------------------
 # First admin user on a fresh database

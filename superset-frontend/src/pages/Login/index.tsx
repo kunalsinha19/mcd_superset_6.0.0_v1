@@ -208,7 +208,8 @@ export default function Login() {
                   { required: true, message: t('Please enter your password') },
                 ]}
               >
-                <Input.Password
+                <Input
+                  type="password"
                   prefix={<Icons.KeyOutlined iconSize="l" />}
                   data-test="password-input"
                 />

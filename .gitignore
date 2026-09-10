@@ -2,6 +2,9 @@
 # superset_config.py.example as the template instead.
 superset_config.py
 
+# One-command local dev server -- embeds a local dev key, never commit.
+run_local.py
+
 # Python
 __pycache__/
 *.py[cod]

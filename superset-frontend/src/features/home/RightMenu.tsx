@@ -581,14 +581,16 @@ const RightMenu = ({
       items.push(languageMenuItem);
     }
 
-    items.push({
-      key: 'settings',
-      label: t('Settings'),
-      icon: <Icons.DownOutlined iconSize="xs" />,
-      children: buildSettingsMenuItems(),
-      className: 'submenu-with-caret',
-      popupOffset: NAVBAR_MENU_POPUP_OFFSET,
-    });
+    if (!navbarRight.user_is_anonymous) {
+      items.push({
+        key: 'settings',
+        label: t('Settings'),
+        icon: <Icons.DownOutlined iconSize="xs" />,
+        children: buildSettingsMenuItems(),
+        className: 'submenu-with-caret',
+        popupOffset: NAVBAR_MENU_POPUP_OFFSET,
+      });
+    }
 
     return items;
   }, [

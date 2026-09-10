@@ -343,24 +343,35 @@ export function Menu({
             className="main-nav"
             selectedKeys={activeTabs}
             disabledOverflow
-            items={menu.map(item => {
-              const props = {
-                ...item,
-                isFrontendRoute: isFrontendRoute(item.url),
-                childs: item.childs?.map(c => {
-                  if (typeof c === 'string') {
-                    return c;
-                  }
+            items={
+              // Public/anonymous users (e.g. anyone viewing /login/, or
+              // after logging out) shouldn't see Dashboards/Charts/Datasets
+              // as navigable top-nav links -- the underlying read
+              // permissions on those still need to exist for the Public
+              // role (that's what makes embedded/guest dashboard viewing
+              // work), but that's a separate thing from showing them as
+              // primary site navigation before anyone has signed in.
+              navbarRight.user_is_anonymous
+                ? []
+                : menu.map(item => {
+                    const props = {
+                      ...item,
+                      isFrontendRoute: isFrontendRoute(item.url),
+                      childs: item.childs?.map(c => {
+                        if (typeof c === 'string') {
+                          return c;
+                        }
 
-                  return {
-                    ...c,
-                    isFrontendRoute: isFrontendRoute(c.url),
-                  };
-                }),
-              };
+                        return {
+                          ...c,
+                          isFrontendRoute: isFrontendRoute(c.url),
+                        };
+                      }),
+                    };
 
-              return buildMenuItem(props);
-            })}
+                    return buildMenuItem(props);
+                  })
+            }
           />
         </StyledCol>
         <Col md={8} xs={24}>
