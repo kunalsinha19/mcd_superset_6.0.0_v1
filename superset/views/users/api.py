@@ -28,6 +28,11 @@ from werkzeug.security import generate_password_hash
 from superset import is_feature_enabled
 from superset.daos.user import UserDAO
 from superset.extensions import db, event_logger
+from superset.security.password_policy import (
+    assert_password_not_reused,
+    PasswordReuseError,
+    record_password_history,
+)
 from superset.utils.slack import get_user_avatar, SlackClientError
 from superset.views.base_api import BaseSupersetApi, requires_json, statsd_metrics
 from superset.views.users.schemas import CurrentUserPutSchema, UserResponseSchema
@@ -49,11 +54,20 @@ class CurrentUserRestApi(BaseSupersetApi):
         item.changed_on = datetime.now()
         item.changed_by_fk = g.user.id
         if "password" in data and data["password"]:
+            # Audit finding #8: reject reuse of the current password or
+            # either of the last 2 -- must run before the hash is
+            # overwritten, since that's the only point the old hash is
+            # still available to check against.
+            assert_password_not_reused(
+                db.session, item.id, item.password, data["password"]
+            )
+            old_hash = item.password
             item.password = generate_password_hash(
                 password=data["password"],
                 method=app.config.get("FAB_PASSWORD_HASH_METHOD", "scrypt"),
                 salt_length=app.config.get("FAB_PASSWORD_HASH_SALT_LENGTH", 16),
             )
+            record_password_history(db.session, item.id, old_hash)
 
     @expose("/", methods=("GET",))
     @safe
@@ -171,6 +185,9 @@ class CurrentUserRestApi(BaseSupersetApi):
             return self.response(200, result=user_response_schema.dump(g.user))
         except ValidationError as error:
             return self.response_400(message=error.messages)
+        except PasswordReuseError as error:
+            db.session.rollback()  # pylint: disable=consider-using-transaction
+            return self.response_400(message={"password": [str(error)]})
 
 
 class UserRestApi(BaseSupersetApi):

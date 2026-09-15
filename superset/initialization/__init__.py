@@ -270,6 +270,11 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
 
         self.superset_app.register_blueprint(health_blueprint)
 
+        # Register login-captcha blueprint (audit finding #11)
+        from superset.security.login_captcha import captcha_blueprint
+
+        self.superset_app.register_blueprint(captcha_blueprint)
+
         #
         # Setup API views
         #
@@ -806,6 +811,29 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
         @self.superset_app.before_request
         def block_version_fingerprint_files() -> None:
             if request.path in hidden_static_paths:
+                abort(404)
+
+        # Audit finding #6: Flask auto-registers OPTIONS on every route,
+        # and the default response leaks the route's supported-methods list
+        # via the Allow header -- caught by the auditor against a non-API
+        # route (/superset/log/). CORS preflight legitimately needs OPTIONS
+        # on whatever CORS_OPTIONS["resources"] actually covers (the
+        # cross-origin frontend's API calls), so this only blocks it
+        # outside that scope, not everywhere. 404 rather than 405 on
+        # purpose -- a 405 is required by HTTP spec to carry its own Allow
+        # header, which would just recreate the same disclosure.
+        cors_resource_prefixes = tuple(
+            resource.rstrip("*")
+            for resource in self.config.get("CORS_OPTIONS", {}).get(
+                "resources", ["/api/v1/*"]
+            )
+        )
+
+        @self.superset_app.before_request
+        def block_unnecessary_options() -> None:
+            if request.method == "OPTIONS" and not request.path.startswith(
+                cors_resource_prefixes
+            ):
                 abort(404)
 
         if self.config["ENABLE_CORS"]:
