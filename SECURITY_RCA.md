@@ -174,6 +174,56 @@ Contrast: `GUEST_TOKEN_JWT_SECRET` in this same file **is** a properly generated
 ([superset_config.py:35](superset_config.py#L35)) — proof the team knows how to do this correctly.
 `SECRET_KEY` and the DB password just weren't rotated the same way.
 
+## G. Consolidated status as of 2026‑09‑15
+
+Full re-pass against all 14 numbered findings, folding in everything done since section D/E/F
+above (code fixes on 2026‑09‑10, plus a real Burp capture against a *different* host,
+`10.197.214.67:8088`, confirming #4 live in the wild). Historical rows above are left as-is —
+this section is the current read, not a replacement.
+
+| # | Finding | Status | Note |
+|---|---|---|---|
+| 1 | Response Replay | ⚪ Disputed | Still no PoC from AAA. No code action taken; not retracted. |
+| 2 | Weak Algorithm | ⚪ Disputed | Still no PoC from AAA. |
+| 3 | Broken Access Control | ⚪ Disputed | Still no PoC from AAA. |
+| 4 | Password travels in clear text | 🟡 Fixed in code, **blocked on TLS** | `SESSION_COOKIE_SECURE`/Talisman `force_https` now default **secure** ([superset_config.py.example](superset_config.py.example), commit `57102ce`) instead of relying on an env var nobody set — confirmed via Burp that `10.197.214.67:8088` was sending plaintext `username=admin&password=...` under the old default. Fix is fail-closed by design: a server with no real TLS in front of it will stop responding over HTTP once this ships, rather than silently leak credentials. **This cannot go live on any real server until that server has an actual TLS certificate + reverse proxy in front of it — that part is not code, needs the admin/ops team.** |
+| 5 | Vulnerable Version of Apache Superset | 🟡 Substantively resolved, pending AAA reply | On 6.0.0, which already includes every CVE currently published against pre-6.0 (see section E.2) — no CVE exists that 6.1.0 fixes and 6.0.0 doesn't. Separately closed the actual *fingerprinting* surface a "vulnerable version" scanner would use: `/static/version_info.json` and `/static/assets/package.json` now 404 unauthenticated (commit `57102ce`), and the version is hidden from the authenticated Settings→About menu (`MENU_HIDE_VERSION_INFO`, default `True`). Waiting on AAA to confirm whether #5 gets merged into #7 per the E.2 ask. |
+| 6 | Dangerous Method (OPTIONS) enabled | 🔴 Still open | No code or proxy change made. Needs `provide_automatic_options=False` or a proxy-level block. |
+| 7 | Outdated Apache Superset version | 🟢 Fixed | Unchanged from section B. |
+| 8 | Password History Not Maintained | 🔴 Still open | No history table/validator implemented. |
+| 9 | No Lockout Implemented | 🟢 Fixed, hardened further | Rate limiting confirmed working; added `RATELIMIT_SWALLOW_ERRORS=True` and documented `RATELIMIT_STORAGE_URI` needing real Redis (not `memory://`) for a multi-worker deployment (commit `57102ce`) — this was hit directly during local testing (Redis down → every request 500'd). |
+| 10 | Buffer overflow (missing length validation) | 🔴 Still open | Real ask (per-field max-length validation) not implemented. |
+| 11 | Login Form Not Protected (no CAPTCHA) | 🔴 Still open | `RECAPTCHA_*` keys in config do nothing — FAB's login view has no CAPTCHA hook. Needs an actual template/view change. |
+| 12 | Port Number Disclosure | 🟡 Partially addressed | `Server:` header (gunicorn/Python version) now stripped via `FLASK_APP_MUTATOR` (fixed the broken `SUPERSET_APP_INITIALIZER` config key that was silently doing nothing — see section D). The internal-IP/port leakage via CSP `frame-ancestors` is a deliberate, documented tradeoff (removing those origins breaks dashboard embedding into the MCD portals) — not fixed, on purpose, unless embedding requirements change. |
+| 13 | CSP Header Misconfigured | 🟡 Mostly fixed | Prod `TALISMAN_CONFIG` no longer includes `'unsafe-eval'` in `script-src` (that was the dev-config leak per E.1/D). `force_https` is now wired to the same secure-by-default flag as #4 — **same TLS blocker applies**: can't safely flip on without a real cert in front of the server. Residual, smaller gap: `style-src` still allows `'unsafe-inline'`, not yet moved to nonce/external CSS. |
+| 14 | IP Address Disclosure | 🟡 Partially addressed | Same as #12 — accepted CSP tradeoff for embedding; `Server` header leak fixed separately. |
+
+**Also fixed, adjacent to #4 but not one of the 14 numbered findings:** removed the password
+show/hide toggle from every password field in the app (login, self-registration, reset-my-password,
+admin's set-user-password, SSH tunnel credentials) — confirmed intentional, audit-driven, per user
+instruction 2026‑09‑10 (commit `b3ffdbd`). Also hid `Settings`/`Dashboards`/`Charts`/`Datasets`
+navigation from anonymous (pre-login/post-logout) views, tightening the same general "don't show
+more than necessary before authentication" concern behind #3's broken-access-control theme, even
+though #3 itself remains disputed for lack of a PoC.
+
+### The SSL/TLS dependency, specifically
+
+Everything gated on an actual certificate existing traces back to two settings that are now tied
+together: `SESSION_COOKIE_SECURE` and Talisman's `force_https` (`superset_config.py.example`).
+Both now default to secure/on. Until a real TLS listener sits in front of a given server:
+
+- **#4 cannot be closed at all** — the code fix exists but is inert (or actively breaks the site
+  if force-enabled) without TLS.
+- **#13's `force_https` piece** is blocked the same way (the CSP content itself is already fixed
+  independent of this).
+- The cross-origin cookie setup needed for the Angular/CORS integration (`SESSION_COOKIE_SAMESITE
+  = "None"`) also requires `Secure=True` to actually work in modern browsers — so that entire
+  integration path is contingent on the same TLS work.
+
+This is infrastructure, not code — see the email draft already sent requesting the admin team set
+up a certificate + reverse proxy (nginx or equivalent) in front of the affected server(s) before
+either of these can go live.
+
 ## Code-level vs. admin-level split
 
 **Code-level = requires a change in this repository (new code/config template, needs a PR + review).**
