@@ -53,6 +53,9 @@ class CurrentUserPutSchema(Schema):
     )
     password = fields.String(
         required=False,
-        validate=[PasswordComplexityValidator()],
+        # PasswordComplexityValidator checks composition (upper/lower/digit/
+        # symbol), not length -- Length() added separately for audit finding
+        # #10 (no server-side max length was enforced on any input field).
+        validate=[PasswordComplexityValidator(), Length(max=128)],
         metadata={"description": password_description},
     )

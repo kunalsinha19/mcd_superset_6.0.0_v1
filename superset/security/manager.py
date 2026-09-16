@@ -68,6 +68,7 @@ from superset.security.guest_token import (
     GuestTokenUser,
     GuestUser,
 )
+from superset.security.login_captcha import SupersetAuthDBView
 from superset.sql.parse import process_jinja_sql, Table
 from superset.tasks.utils import get_current_user
 from superset.utils import json
@@ -169,6 +170,60 @@ class SupersetUserApi(UserApi):
         """
         item.roles = []
 
+    def pre_update(self, item: Model, data: dict[str, Any]) -> None:
+        """
+        Overriding this method for two audit findings:
+        - #8 reject password reuse, before FAB's own pre_update overwrites
+          the hash (the only point the *old* hash is still available to
+          check the new one against).
+        - #10 server-side max-length on fields FAB's own schema leaves
+          unbounded (email/first_name/last_name/password -- username
+          already has FAB's own Length(1, 250)).
+        Local import to dodge a circular import: this module is imported by
+        superset.extensions, which superset.security.password_policy's own
+        dependents load through, so importing it at module scope here
+        would cycle.
+        """
+        # pylint: disable=import-outside-toplevel
+        from superset.security.password_policy import (
+            assert_length_ok,
+            assert_password_not_reused,
+            EMAIL_MAX_LENGTH,
+            NAME_MAX_LENGTH,
+            PASSWORD_MAX_LENGTH,
+            record_password_history,
+        )
+
+        assert_length_ok(data.get("email"), EMAIL_MAX_LENGTH, "Email")
+        assert_length_ok(data.get("first_name"), NAME_MAX_LENGTH, "First name")
+        assert_length_ok(data.get("last_name"), NAME_MAX_LENGTH, "Last name")
+        assert_length_ok(data.get("password"), PASSWORD_MAX_LENGTH, "Password")
+
+        old_hash = item.password if "password" in data and data["password"] else None
+        if old_hash:
+            db_session = self.datamodel.session
+            assert_password_not_reused(db_session, item.id, old_hash, data["password"])
+        super().pre_update(item, data)
+        if old_hash:
+            record_password_history(self.datamodel.session, item.id, old_hash)
+
+    def pre_add(self, item: Model) -> None:
+        """Audit finding #10: length-check new-user fields before FAB's
+        pre_add hashes the (still plaintext, at this point) password."""
+        # pylint: disable=import-outside-toplevel
+        from superset.security.password_policy import (
+            assert_length_ok,
+            EMAIL_MAX_LENGTH,
+            NAME_MAX_LENGTH,
+            PASSWORD_MAX_LENGTH,
+        )
+
+        assert_length_ok(item.email, EMAIL_MAX_LENGTH, "Email")
+        assert_length_ok(item.first_name, NAME_MAX_LENGTH, "First name")
+        assert_length_ok(item.last_name, NAME_MAX_LENGTH, "Last name")
+        assert_length_ok(item.password, PASSWORD_MAX_LENGTH, "Password")
+        super().pre_add(item)
+
 
 PermissionViewModelView.list_widget = SupersetSecurityListWidget
 PermissionModelView.list_widget = SupersetSecurityListWidget
@@ -251,6 +306,10 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
 
     role_api = SupersetRoleApi
     user_api = SupersetUserApi
+    # Audit finding #11: adds a CAPTCHA check to the login POST. See
+    # superset/security/login_captcha.py for why this is a self-hosted
+    # math challenge rather than flask_wtf.recaptcha.RecaptchaField.
+    authdbview = SupersetAuthDBView
 
     USER_MODEL_VIEWS = {
         "RegisterUserModelView",
@@ -397,6 +456,32 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
 
     guest_user_cls = GuestUser
     pyjwt_for_guest_token = _jwt_global_obj
+
+    def reset_password(self, userid: int, password: str) -> None:
+        """
+        Overriding FAB's reset_password -- the third and last code path that
+        sets a user's password in this app (`flask fab reset-password` CLI,
+        FAB's ResetPasswordView, and our own admin scripts all go through
+        this). Adds audit finding #8 (reuse check) and #10 (max length),
+        same as SupersetUserApi.pre_update/pre_add above -- this is the one
+        path that doesn't already go through a REST API pre_update hook.
+        """
+        # pylint: disable=import-outside-toplevel
+        from superset.security.password_policy import (
+            assert_length_ok,
+            assert_password_not_reused,
+            PASSWORD_MAX_LENGTH,
+            record_password_history,
+        )
+
+        assert_length_ok(password, PASSWORD_MAX_LENGTH, "Password")
+        user = self.get_user_by_id(userid)
+        old_hash = user.password if user else None
+        if old_hash:
+            assert_password_not_reused(self.session, userid, old_hash, password)
+        super().reset_password(userid, password)
+        if old_hash:
+            record_password_history(self.session, userid, old_hash)
 
     def create_login_manager(self, app: Flask) -> LoginManager:
         lm = super().create_login_manager(app)

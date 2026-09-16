@@ -27,7 +27,7 @@ import {
   Typography,
   Icons,
 } from '@superset-ui/core/components';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { capitalize } from 'lodash/fp';
 import getBootstrapData from 'src/utils/getBootstrapData';
 
@@ -46,6 +46,7 @@ type Provider = OAuthProvider | OIDProvider;
 interface LoginForm {
   username: string;
   password: string;
+  captcha_answer: string;
 }
 
 enum AuthType {
@@ -77,6 +78,22 @@ const StyledLabel = styled(Typography.Text)`
 export default function Login() {
   const [form] = Form.useForm<LoginForm>();
   const [loading, setLoading] = useState(false);
+  // Audit finding #11 -- self-hosted CAPTCHA (see
+  // superset/security/login_captcha.py for why not RecaptchaField). The
+  // answer is never sent to the client, only the question; validated
+  // server-side on submit.
+  const [captchaQuestion, setCaptchaQuestion] = useState<string>('');
+
+  const fetchCaptcha = useCallback(() => {
+    fetch('/login/captcha', { credentials: 'same-origin' })
+      .then(res => (res.ok ? res.json() : Promise.reject(res)))
+      .then(data => setCaptchaQuestion(data.question))
+      .catch(() => setCaptchaQuestion(''));
+  }, []);
+
+  useEffect(() => {
+    fetchCaptcha();
+  }, [fetchCaptcha]);
 
   const bootstrapData = getBootstrapData();
   const nextUrl = useMemo(() => {
@@ -197,6 +214,7 @@ export default function Login() {
               >
                 <Input
                   autoFocus
+                  maxLength={64}
                   prefix={<Icons.UserOutlined iconSize="l" />}
                   data-test="username-input"
                 />
@@ -210,10 +228,30 @@ export default function Login() {
               >
                 <Input
                   type="password"
+                  maxLength={128}
                   prefix={<Icons.KeyOutlined iconSize="l" />}
                   data-test="password-input"
                 />
               </Form.Item>
+              {captchaQuestion && (
+                <Form.Item<LoginForm>
+                  label={
+                    <StyledLabel>
+                      {t('Security check: %s = ?', captchaQuestion)}
+                    </StyledLabel>
+                  }
+                  name="captcha_answer"
+                  rules={[
+                    { required: true, message: t('Please answer the security check') },
+                  ]}
+                >
+                  <Input
+                    inputMode="numeric"
+                    maxLength={4}
+                    data-test="captcha-answer-input"
+                  />
+                </Form.Item>
+              )}
               <Form.Item label={null}>
                 <Flex
                   css={css`
