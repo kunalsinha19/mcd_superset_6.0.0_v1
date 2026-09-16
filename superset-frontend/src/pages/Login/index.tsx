@@ -75,25 +75,85 @@ const StyledLabel = styled(Typography.Text)`
   `}
 `;
 
+// Max 3 failed attempts, then the password field freezes with a visible
+// countdown until Flask-Limiter's own AUTH_RATE_LIMIT window resets (see
+// superset_config.py.example) -- persisted to sessionStorage so a page
+// refresh mid-lockout doesn't just reset the visible timer (the server-side
+// limit isn't affected either way; this only keeps the UI honest).
+const LOCKOUT_STORAGE_KEY = 'superset_login_locked_until';
+const DEFAULT_LOCKOUT_SECONDS = 60;
+
+function readStoredLockout(): number | null {
+  try {
+    const stored = window.sessionStorage.getItem(LOCKOUT_STORAGE_KEY);
+    const parsed = stored ? Number.parseInt(stored, 10) : NaN;
+    return Number.isFinite(parsed) && parsed > Date.now() ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistLockout(until: number | null) {
+  try {
+    if (until) {
+      window.sessionStorage.setItem(LOCKOUT_STORAGE_KEY, String(until));
+    } else {
+      window.sessionStorage.removeItem(LOCKOUT_STORAGE_KEY);
+    }
+  } catch (_error) {
+    // Private browsing / storage disabled -- the countdown just won't
+    // survive a refresh, enforcement itself is still server-side.
+  }
+}
+
 export default function Login() {
   const [form] = Form.useForm<LoginForm>();
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [lockedUntil, setLockedUntil] = useState<number | null>(
+    readStoredLockout,
+  );
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
   // Audit finding #11 -- self-hosted CAPTCHA (see
-  // superset/security/login_captcha.py for why not RecaptchaField). The
-  // answer is never sent to the client, only the question; validated
-  // server-side on submit.
-  const [captchaQuestion, setCaptchaQuestion] = useState<string>('');
+  // superset/security/login_captcha.py for why not RecaptchaField).
+  // Alphanumeric per the audit team's follow-up instruction (a plain
+  // arithmetic sum was too small an answer space); validated server-side
+  // on submit, matched case-insensitively.
+  const [captchaCode, setCaptchaCode] = useState<string>('');
 
   const fetchCaptcha = useCallback(() => {
     fetch('/login/captcha', { credentials: 'same-origin' })
       .then(res => (res.ok ? res.json() : Promise.reject(res)))
-      .then(data => setCaptchaQuestion(data.question))
-      .catch(() => setCaptchaQuestion(''));
+      .then(data => setCaptchaCode(data.code))
+      .catch(() => setCaptchaCode(''));
   }, []);
 
   useEffect(() => {
     fetchCaptcha();
   }, [fetchCaptcha]);
+
+  useEffect(() => {
+    if (!lockedUntil) {
+      setRemainingSeconds(0);
+      return undefined;
+    }
+    const tick = () => {
+      const secondsLeft = Math.max(
+        0,
+        Math.ceil((lockedUntil - Date.now()) / 1000),
+      );
+      setRemainingSeconds(secondsLeft);
+      if (secondsLeft <= 0) {
+        setLockedUntil(null);
+        persistLockout(null);
+        setErrorMessage('');
+        fetchCaptcha();
+      }
+    };
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [lockedUntil, fetchCaptcha]);
 
   const bootstrapData = getBootstrapData();
   const nextUrl = useMemo(() => {
@@ -122,11 +182,48 @@ export default function Login() {
   const authRegistration: boolean =
     bootstrapData.common.conf.AUTH_USER_REGISTRATION;
 
-  const onFinish = (values: LoginForm) => {
+  const onFinish = async (values: LoginForm) => {
+    if (lockedUntil && lockedUntil > Date.now()) {
+      return;
+    }
     setLoading(true);
-    SupersetClient.postForm(loginEndpoint, values, '').finally(() => {
+    setErrorMessage('');
+    try {
+      const { json } = await SupersetClient.post({
+        endpoint: loginEndpoint,
+        jsonPayload: values,
+      });
+      window.location.href = json?.redirect || '/';
+      // Intentionally leave loading=true -- the page is navigating away.
+    } catch (err: any) {
+      if (err?.status === 429) {
+        const retryAfterHeader = err.headers?.get?.('Retry-After');
+        const retryAfterSeconds =
+          Number.parseInt(retryAfterHeader, 10) || DEFAULT_LOCKOUT_SECONDS;
+        const until = Date.now() + retryAfterSeconds * 1000;
+        setLockedUntil(until);
+        persistLockout(until);
+        setErrorMessage(
+          t('Too many failed attempts. Please wait for the timer to finish.'),
+        );
+      } else {
+        let message = t(
+          'Invalid username, password, or security check answer.',
+        );
+        try {
+          const body = await err.json();
+          if (body?.message) {
+            message = body.message;
+          }
+        } catch (_parseError) {
+          // Non-JSON error body -- keep the generic message above.
+        }
+        setErrorMessage(message);
+      }
+      form.setFieldsValue({ captcha_answer: '' } as Partial<LoginForm>);
+      fetchCaptcha();
       setLoading(false);
-    });
+    }
   };
 
   const getAuthIconElement = (
@@ -229,15 +326,30 @@ export default function Login() {
                 <Input
                   type="password"
                   maxLength={128}
+                  disabled={!!lockedUntil}
                   prefix={<Icons.KeyOutlined iconSize="l" />}
                   data-test="password-input"
                 />
               </Form.Item>
-              {captchaQuestion && (
+              {lockedUntil ? (
+                <Typography.Text type="danger" data-test="login-lockout-timer">
+                  {t(
+                    'Too many failed attempts. Try again in %s seconds.',
+                    remainingSeconds,
+                  )}
+                </Typography.Text>
+              ) : (
+                errorMessage && (
+                  <Typography.Text type="danger" data-test="login-error-message">
+                    {errorMessage}
+                  </Typography.Text>
+                )
+              )}
+              {captchaCode && (
                 <Form.Item<LoginForm>
                   label={
                     <StyledLabel>
-                      {t('Security check: %s = ?', captchaQuestion)}
+                      {t('Security check: type the code %s', captchaCode)}
                     </StyledLabel>
                   }
                   name="captcha_answer"
@@ -246,8 +358,11 @@ export default function Login() {
                   ]}
                 >
                   <Input
-                    inputMode="numeric"
-                    maxLength={4}
+                    maxLength={6}
+                    disabled={!!lockedUntil}
+                    css={css`
+                      text-transform: uppercase;
+                    `}
                     data-test="captcha-answer-input"
                   />
                 </Form.Item>
@@ -263,6 +378,7 @@ export default function Login() {
                     type="primary"
                     htmlType="submit"
                     loading={loading}
+                    disabled={!!lockedUntil}
                     data-test="login-button"
                   >
                     {t('Sign in')}
