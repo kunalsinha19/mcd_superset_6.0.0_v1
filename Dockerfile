@@ -36,8 +36,24 @@ WORKDIR /app
 
 # Install pinned Python dependencies first so this layer caches independently
 # of application source changes.
+#
+# Build-speed fix: previously `--no-cache-dir` with no BuildKit cache mount
+# meant pip's downloaded/compiled wheels went nowhere durable -- the only
+# thing making a rebuild fast was Docker's own image-layer cache. The first
+# time all images get removed (exactly what triggered the ~1.5h rebuild),
+# that layer cache is gone too, so every one of the 147 pinned packages had
+# to be re-downloaded and, for anything without a prebuilt wheel, recompiled
+# from source via build-essential, from a cold start.
+#
+# The cache mount below lives outside the image entirely (BuildKit's own
+# cache store), so it survives `docker image rm`/`docker system prune` and
+# a full from-scratch rebuild reuses it. This changes nothing about what
+# gets installed -- same requirements-lock.txt, same resulting environment
+# inside the final image -- only how fast a rebuild is when the layer cache
+# alone isn't there to rely on.
 COPY requirements-lock.txt .
-RUN pip install --no-cache-dir -r requirements-lock.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-lock.txt
 
 # Copy application source (respects .dockerignore -- no node_modules,
 # no .git, no __pycache__, superset_config.py excluded).
