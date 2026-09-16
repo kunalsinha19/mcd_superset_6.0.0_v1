@@ -34,7 +34,7 @@
     "spa": {
       "css": [
         "/static/assets/5482.78a862f6f470da93b4ec.entry.css",
-        "/static/assets/spa.0868eff19d936c720fc1.entry.css"
+        "/static/assets/spa.7ea0fabfecc4eb1487a5.entry.css"
       ],
       "js": [
         "/static/assets/thumbnail.8d6ee3d381e5ccdfe080.entry.js",
@@ -55,7 +55,7 @@
         "/static/assets/8289.f61665e02874ca5b8cc3.entry.js",
         "/static/assets/5797.3abf3965bc12037e181e.entry.js",
         "/static/assets/2314.d95390d24a2b2ded465b.entry.js",
-        "/static/assets/spa.0868eff19d936c720fc1.entry.js"
+        "/static/assets/spa.7ea0fabfecc4eb1487a5.entry.js"
       ]
     },
     "embedded": {

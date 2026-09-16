@@ -46,7 +46,12 @@ GUEST_TOKEN_JWT_SECRET = "CHANGE_ME"  # noqa: S105
 # enabling explicitly rather than relying on that env var being set.
 RATELIMIT_ENABLED = True
 AUTH_RATE_LIMITED = True
-AUTH_RATE_LIMIT = "5 per minute"
+# 3 failed/attempted POSTs to /login/ per client IP per minute -- matches
+# the "max 3 attempts, then a timed lockout" requirement. This only counts
+# POST submissions (flask-limiter is wired to the auth blueprint with
+# methods=["POST"] inside Flask-AppBuilder), so loading the login page or
+# fetching a new CAPTCHA never counts against it.
+AUTH_RATE_LIMIT = "3 per minute"
 # Needs storage shared across all gunicorn workers -- the in-memory default
 # is per-worker, so with N workers the real limit is effectively N times
 # looser than configured, and a restart silently resets it. Point at Redis:
@@ -58,6 +63,11 @@ AUTH_RATE_LIMIT = "5 per minute"
 # every route, including /health. Log the failure and let the request
 # through instead of taking the whole app down over a cache blip:
 RATELIMIT_SWALLOW_ERRORS = True
+# Adds Retry-After / X-RateLimit-Remaining response headers on rate-limited
+# routes. The login page reads Retry-After on a 429 to show an accurate
+# "try again in Ns" countdown instead of a hardcoded guess -- see
+# superset/security/login_captcha.py.
+RATELIMIT_HEADERS_ENABLED = True
 
 # ---------------------------------------------------------------------
 # HTTPS enforcement + session cookie -- secure by default, on purpose
