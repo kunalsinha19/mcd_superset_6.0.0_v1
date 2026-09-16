@@ -1257,6 +1257,54 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
         if deleted_count := pvms.delete():
             logger.info("Deleted %i faulty permissions", deleted_count)
 
+    # Audit finding #3 (Broken Access Control) hardening. PUBLIC_ROLE_LIKE
+    # mirrors an entire role (typically "Gamma") onto Public, including
+    # mutating REST API permissions that role legitimately needs for its
+    # own logged-in users -- can_write/can_add/can_edit/can_delete map to
+    # POST/PUT/DELETE on Chart, Dashboard, etc. Public is only ever meant
+    # to grant unauthenticated *viewing* of embedded content, never the
+    # ability to create/modify/delete anything, so these are stripped
+    # unconditionally after the mirror, regardless of what the source role
+    # happens to contain today or in the future.
+    #
+    # Currently dormant either way in this deployment: AUTH_ROLE_PUBLIC is
+    # unset in superset_config.py, so get_user_roles() returns zero roles
+    # for anonymous requests (see below) and GUEST_ROLE_NAME is pinned to
+    # "Gamma" rather than the stock default of "Public" -- so nothing
+    # anonymous currently resolves to this role at all. This strip is
+    # defense-in-depth for the day someone sets AUTH_ROLE_PUBLIC to enable
+    # public dashboard viewing and doesn't realize Public also inherited
+    # write access.
+    PUBLIC_ROLE_DENYLIST = {
+        "can_add",
+        "can_edit",
+        "can_delete",
+        "can_delete_embedded",
+        "can_write",
+    }
+
+    def _harden_public_role(self) -> None:
+        public_role = self.get_public_role()
+        if not public_role:
+            return
+        to_strip = [
+            pvm
+            for pvm in list(public_role.permissions)
+            if pvm.permission and pvm.permission.name in self.PUBLIC_ROLE_DENYLIST
+        ]
+        for pvm in to_strip:
+            self.del_permission_role(public_role, pvm)
+        if to_strip:
+            logger.warning(
+                "Stripped %d write-capable permission(s) from the Public "
+                "role (audit finding #3 hardening): %s",
+                len(to_strip),
+                sorted(
+                    f"{pvm.permission.name}/{pvm.view_menu.name}"
+                    for pvm in to_strip
+                ),
+            )
+
     def sync_role_definitions(self) -> None:
         """
         Initialize the Superset application with security roles and such.
@@ -1281,6 +1329,7 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                 self.auth_role_public,
                 merge=True,
             )
+            self._harden_public_role()
         self.create_missing_perms()
         self.clean_perms()
 
