@@ -23,7 +23,8 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, cast, NamedTuple, Optional, TYPE_CHECKING
 
-from flask import current_app, Flask, g, Request
+from flask import current_app, Flask, g, has_request_context, Request
+from flask import session as flask_session
 from flask_appbuilder import Model
 from flask_appbuilder.security.sqla.apis import RoleApi, UserApi
 from flask_appbuilder.security.sqla.manager import SecurityManager
@@ -45,7 +46,12 @@ from flask_appbuilder.security.views import (
 )
 from flask_appbuilder.widgets import ListWidget
 from flask_babel import lazy_gettext as _
-from flask_login import AnonymousUserMixin, LoginManager
+from flask_login import (
+    AnonymousUserMixin,
+    LoginManager,
+    user_logged_in,
+    user_logged_out,
+)
 from jwt.api_jwt import _jwt_global_obj
 from sqlalchemy import and_, inspect, or_
 from sqlalchemy.engine.base import Connection
@@ -69,6 +75,12 @@ from superset.security.guest_token import (
     GuestUser,
 )
 from superset.security.login_captcha import SupersetAuthDBView
+from superset.security.session_revocation import (
+    is_session_revoked,
+    new_session_id,
+    revoke_session,
+    SESSION_SID_KEY,
+)
 from superset.sql.parse import process_jinja_sql, Table
 from superset.tasks.utils import get_current_user
 from superset.utils import json
@@ -486,7 +498,56 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
     def create_login_manager(self, app: Flask) -> LoginManager:
         lm = super().create_login_manager(app)
         lm.request_loader(self.request_loader)
+        # Audit finding #1 (Response Replay): see
+        # superset/security/session_revocation.py. Only the *session* user
+        # loader is wrapped -- load_user() itself is shared with the JWT
+        # API path and stays untouched.
+        lm.user_loader(self._load_session_user)
+        # FAB hands us `current_app` (a LocalProxy); Flask-Login sends its
+        # signals with the real app object as sender, so connecting against
+        # the proxy would silently never match.
+        real_app = (
+            app._get_current_object()  # pylint: disable=protected-access
+            if hasattr(app, "_get_current_object")
+            else app
+        )
+        user_logged_in.connect(self._stamp_session_id, real_app)
+        user_logged_out.connect(self._revoke_session_id, real_app)
         return lm
+
+    def _load_session_user(self, pk: Any) -> Optional[User]:
+        if has_request_context():
+            sid = flask_session.get(SESSION_SID_KEY)
+            if sid and is_session_revoked(self.session, sid):
+                # Logged out elsewhere: a replayed/captured cookie. Drop the
+                # auth markers so the response also stops re-sending them.
+                for key in ("_user_id", "_fresh", "_id", SESSION_SID_KEY):
+                    flask_session.pop(key, None)
+                return None
+        return self.load_user(pk)
+
+    def _stamp_session_id(self, _sender: Any, **_extra: Any) -> None:
+        # New random id on every login, so a session id from before login
+        # (or from a previous login) is never reused for the authenticated
+        # session. An id this session already carried is retired rather than
+        # left valid behind the new one.
+        previous_sid = flask_session.get(SESSION_SID_KEY)
+        if previous_sid:
+            revoke_session(
+                self.session, previous_sid, current_app.permanent_session_lifetime
+            )
+        flask_session[SESSION_SID_KEY] = new_session_id()
+
+    def _revoke_session_id(self, _sender: Any, **_extra: Any) -> None:
+        # Fired by flask_login.logout_user(), which pops _user_id but leaves
+        # custom keys such as our sid in place.
+        if not has_request_context():
+            return
+        sid = flask_session.pop(SESSION_SID_KEY, None)
+        if sid:
+            revoke_session(
+                self.session, sid, current_app.permanent_session_lifetime
+            )
 
     def request_loader(self, request: Request) -> Optional[User]:
         # pylint: disable=import-outside-toplevel

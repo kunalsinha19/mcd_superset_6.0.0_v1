@@ -836,6 +836,16 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
             ):
                 abort(404)
 
+        # Audit finding #4: the change-password / admin set-password endpoints
+        # receive `enc_password`; turn it back into `password` before any view
+        # or schema reads the body. See superset/security/password_transport.py.
+        # pylint: disable=import-outside-toplevel
+        from superset.security.password_transport import (
+            decrypt_password_in_request,
+        )
+
+        self.superset_app.before_request(decrypt_password_in_request)
+
         if self.config["ENABLE_CORS"]:
             # pylint: disable=import-outside-toplevel
             from flask_cors import CORS

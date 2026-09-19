@@ -18,6 +18,7 @@
  */
 import { SupersetClient, t } from '@superset-ui/core';
 import { SelectOption } from 'src/components/ListView';
+import { withEncryptedPassword } from 'src/utils/passwordEncryption';
 import { FormValues } from './types';
 
 export const createUser = async (values: FormValues) => {
@@ -27,14 +28,14 @@ export const createUser = async (values: FormValues) => {
   }
   await SupersetClient.post({
     endpoint: '/api/v1/security/users/',
-    jsonPayload: { ...payload },
+    jsonPayload: await withEncryptedPassword({ ...payload }),
   });
 };
 
 export const updateUser = async (user_Id: number, values: FormValues) => {
   await SupersetClient.put({
     endpoint: `/api/v1/security/users/${user_Id}`,
-    jsonPayload: { ...values },
+    jsonPayload: await withEncryptedPassword({ ...values }),
   });
 };
 

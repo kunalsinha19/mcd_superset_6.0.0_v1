@@ -20,6 +20,7 @@ import { SupersetClient, t } from '@superset-ui/core';
 import { FormModal, FormItem, Input } from '@superset-ui/core/components';
 import { useToasts } from 'src/components/MessageToasts/withToasts';
 import { User } from 'src/types/bootstrapTypes';
+import { withEncryptedPassword } from 'src/utils/passwordEncryption';
 import { BaseUserListModalProps, FormValues } from '../users/types';
 
 export interface UserInfoModalProps extends BaseUserListModalProps {
@@ -50,7 +51,7 @@ function UserInfoModal({
       const { confirm_password, ...payload } = values;
       await SupersetClient.put({
         endpoint: `/api/v1/me/`,
-        jsonPayload: { ...payload },
+        jsonPayload: await withEncryptedPassword({ ...payload }),
       });
       addSuccessToast(
         isEditMode

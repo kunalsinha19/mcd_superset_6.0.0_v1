@@ -70,6 +70,26 @@ RATELIMIT_SWALLOW_ERRORS = True
 RATELIMIT_HEADERS_ENABLED = True
 
 # ---------------------------------------------------------------------
+# Login password encryption (audit findings #2 / #4)
+# ---------------------------------------------------------------------
+# The login page encrypts the password to the server's public key in the
+# browser (ECDH P-256 + AES-256-GCM, native Web Crypto) so the login request
+# never contains it in the clear -- see superset/security/login_encryption.py.
+# The server key is derived from SECRET_KEY, so nothing extra to provision and
+# every gunicorn worker agrees on it. This is defence in depth on top of TLS,
+# not a replacement for it.
+#
+# Set False to stop advertising a key (the login page then sends the password
+# the old way). Only useful for debugging.
+LOGIN_PASSWORD_ENCRYPTION = True
+# While True, a login that carries a plain `password` field is still accepted.
+# That is needed for browsers where Web Crypto doesn't exist (plain-HTTP dev
+# hosts -- crypto.subtle only exists on HTTPS/localhost) and for the classic
+# form-POST fallback. Once you've confirmed logins work on the deployed HTTPS
+# host, set this False to *enforce* encrypted-only logins.
+LOGIN_ALLOW_PLAINTEXT_PASSWORD = True
+
+# ---------------------------------------------------------------------
 # HTTPS enforcement + session cookie -- secure by default, on purpose
 # ---------------------------------------------------------------------
 # A real deployment of this app was caught in Burp sending username and

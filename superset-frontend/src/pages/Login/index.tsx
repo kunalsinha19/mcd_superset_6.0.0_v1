@@ -30,6 +30,10 @@ import {
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { capitalize } from 'lodash/fp';
 import getBootstrapData from 'src/utils/getBootstrapData';
+import {
+  canEncryptPassword,
+  encryptPassword,
+} from 'src/utils/passwordEncryption';
 
 type OAuthProvider = {
   name: string;
@@ -120,12 +124,26 @@ export default function Login() {
   // arithmetic sum was too small an answer space); validated server-side
   // on submit, matched case-insensitively.
   const [captchaCode, setCaptchaCode] = useState<string>('');
+  // Audit findings #2 / #4 -- the same challenge response also carries the
+  // server's public key and a single-use nonce; the password is encrypted
+  // to that key on submit (see src/utils/passwordEncryption.ts) so the login
+  // request never contains it in the clear.
+  const [encryptionKey, setEncryptionKey] = useState<string>('');
+  const [encryptionNonce, setEncryptionNonce] = useState<string>('');
 
   const fetchCaptcha = useCallback(() => {
     fetch('/login/captcha', { credentials: 'same-origin' })
       .then(res => (res.ok ? res.json() : Promise.reject(res)))
-      .then(data => setCaptchaCode(data.code))
-      .catch(() => setCaptchaCode(''));
+      .then(data => {
+        setCaptchaCode(data.code);
+        setEncryptionKey(data.key || '');
+        setEncryptionNonce(data.nonce || '');
+      })
+      .catch(() => {
+        setCaptchaCode('');
+        setEncryptionKey('');
+        setEncryptionNonce('');
+      });
   }, []);
 
   useEffect(() => {
@@ -189,9 +207,29 @@ export default function Login() {
     setLoading(true);
     setErrorMessage('');
     try {
+      const payload: Record<string, string> = {
+        username: values.username,
+        captcha_answer: values.captcha_answer,
+      };
+      let encrypted = false;
+      if (encryptionKey && encryptionNonce && canEncryptPassword()) {
+        try {
+          payload.enc_password = await encryptPassword(
+            values.password,
+            encryptionKey,
+            encryptionNonce,
+          );
+          encrypted = true;
+        } catch (_encryptionError) {
+          // Fall through to the plain field below rather than block login.
+        }
+      }
+      if (!encrypted) {
+        payload.password = values.password;
+      }
       const { json } = await SupersetClient.post({
         endpoint: loginEndpoint,
-        jsonPayload: values,
+        jsonPayload: payload,
       });
       window.location.href = json?.redirect || '/';
       // Intentionally leave loading=true -- the page is navigating away.
