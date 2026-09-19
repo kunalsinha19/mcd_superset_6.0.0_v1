@@ -58,13 +58,6 @@ class StubUser:
         return "2147483000"
 
 
-@pytest.fixture(scope="module")
-def app():
-    from superset.app import create_app
-
-    return create_app()
-
-
 @pytest.fixture(autouse=True)
 def _app_context(app):
     with app.app_context():

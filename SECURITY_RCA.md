@@ -277,8 +277,13 @@ ends (31 days by default). CWE‑613, Insufficient Session Expiration.
   decryption of saved database connection passwords (an earlier version of this note said to).
 - The classic FAB password forms (`/resetmypassword/form`, `/resetpassword/form`, `/users/add`,
   `/users/edit/<id>`) posted a plain form field and were still routable; nothing links to them, so
-  they now 404 unless `LEGACY_PASSWORD_FORMS_ENABLED = True`. Still plaintext by design:
-  `POST /api/v1/security/login` (the JWT login used by API clients/the Angular portal).
+  they now 404 unless `LEGACY_PASSWORD_FORMS_ENABLED = True`.
+- `POST /api/v1/security/login` (the JWT login used by API clients/the Angular portal) is
+  CSRF-exempt and takes a plain username/password by design, so it can't be encrypted or given a
+  CAPTCHA without changing those clients. It also had **no rate limit** (FAB's `AUTH_RATE_LIMIT` is
+  attached to the web login blueprint only): 8 wrong passwords in a row were all 401. That let a
+  brute-force script bypass the #9 lockout and the #11 CAPTCHA entirely. Now throttled on failed
+  logins only (5/min per client+username, 30/min per client; successes never count).
 - Fails open, with an ERROR log, only if the revocation lookup itself errors (e.g. migration not
   yet run) — an ops slip must not lock every user out.
 - Bug found and fixed while testing: FAB passes `current_app` (a `LocalProxy`) to

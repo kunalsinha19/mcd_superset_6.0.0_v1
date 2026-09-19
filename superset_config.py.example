@@ -106,6 +106,15 @@ SESSION_REQUIRE_SID = True
 # this is True.
 LEGACY_PASSWORD_FORMS_ENABLED = False
 
+# POST /api/v1/security/login (the JWT login used by API clients) sits outside
+# AUTH_RATE_LIMIT, which FAB attaches to the web login only -- it used to allow
+# unlimited password guessing. It is throttled on *failed* logins only, so
+# legitimate clients are never slowed: first per client+username, then a wider
+# cap per client to bound a spray across many usernames. Raise these if many
+# users log in through one shared IP (e.g. a server-side proxy) and mistype a lot.
+API_LOGIN_RATE_LIMIT = "5 per minute"
+API_LOGIN_IP_RATE_LIMIT = "30 per minute"
+
 # ---------------------------------------------------------------------
 # HTTPS enforcement + session cookie -- secure by default, on purpose
 # ---------------------------------------------------------------------

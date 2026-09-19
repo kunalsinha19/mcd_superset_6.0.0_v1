@@ -228,6 +228,13 @@ def part2_online() -> None:
         check(f"classic plaintext password form {legacy} is blocked (404)",
               Session(base).call("GET", legacy)[0] == 404)
 
+    ghost = "nouser-" + os.urandom(4).hex()
+    codes = [Session(base).call("POST", "/api/v1/security/login", {
+        "username": ghost, "password": "wrong", "provider": "db"})[0]
+        for _ in range(8)]
+    check("JWT API login is throttled after repeated failures "
+          f"(got {codes})", 429 in codes and codes[0] == 401)
+
     s = Session(base)
     csrf, payload, headers, status, resp, challenge = fresh_login(s)
     check("challenge advertises an encryption key and nonce", "key" in challenge)

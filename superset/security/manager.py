@@ -23,9 +23,10 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, cast, NamedTuple, Optional, TYPE_CHECKING
 
-from flask import current_app, Flask, g, has_request_context, Request
+from flask import current_app, Flask, g, has_request_context, Request, request
 from flask import session as flask_session
 from flask_appbuilder import Model
+from flask_appbuilder.security.api import SecurityApi
 from flask_appbuilder.security.sqla.apis import RoleApi, UserApi
 from flask_appbuilder.security.sqla.manager import SecurityManager
 from flask_appbuilder.security.sqla.models import (
@@ -52,6 +53,7 @@ from flask_login import (
     user_logged_in,
     user_logged_out,
 )
+from flask_limiter.util import get_remote_address
 from jwt.api_jwt import _jwt_global_obj
 from sqlalchemy import and_, inspect, or_
 from sqlalchemy.engine.base import Connection
@@ -3075,6 +3077,55 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
             role.name for role in self.get_user_roles()
         ]
 
+    def _limit_api_login(self) -> None:
+        """Audit findings #9 / #11: POST /api/v1/security/login (the JWT login
+        used by API clients) sat outside the web login's protection -- FAB's
+        AUTH_RATE_LIMIT is attached to the web auth blueprint only, so this
+        endpoint allowed unlimited password guessing (8 failures in a row, all
+        401, never a 429). Its CSRF exemption and plain username/password body
+        are deliberate (cross-origin API clients), so it isn't blocked or given
+        a CAPTCHA; it is throttled instead.
+
+        Only *failed* logins count, so legitimate clients are never slowed. The
+        first limit is per client+username, so one mistyped user behind a shared
+        proxy can't lock out the rest; the second caps failures per client to
+        bound a spray across many usernames. Limits are read per request from
+        API_LOGIN_RATE_LIMIT / API_LOGIN_IP_RATE_LIMIT.
+        """
+        if not self.is_auth_limited:
+            return
+        api = next(
+            (v for v in self.appbuilder.baseviews if isinstance(v, SecurityApi)),
+            None,
+        )
+        if api is None:
+            return
+        login_endpoint = f"{api.blueprint.name}.login"
+
+        def not_the_login_view() -> bool:
+            return request.endpoint != login_endpoint
+
+        def failed_login(response: Any) -> bool:
+            return response.status_code == 401
+
+        def client_and_username() -> str:
+            body = request.get_json(silent=True)
+            name = body.get("username") if isinstance(body, dict) else ""
+            return f"{get_remote_address()}|{str(name or '').strip().lower()[:64]}"
+
+        for scope, key_func, config_key, default in (
+            ("api_login_user", client_and_username, "API_LOGIN_RATE_LIMIT", "5 per minute"),
+            ("api_login_client", get_remote_address, "API_LOGIN_IP_RATE_LIMIT", "30 per minute"),
+        ):
+            self.limiter.limit(
+                (lambda k=config_key, d=default: current_app.config.get(k, d)),
+                key_func=key_func,
+                methods=["POST"],
+                scope=scope,
+                exempt_when=not_the_login_view,
+                deduct_when=failed_login,
+            )(api.blueprint)
+
     # temporal change to remove the roles view from the security menu,
     # after migrating all views to frontend, we will set FAB_ADD_SECURITY_VIEWS = False
     def register_views(self) -> None:
@@ -3086,6 +3137,7 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
         )
 
         super().register_views()
+        self._limit_api_login()
 
         for view in list(self.appbuilder.baseviews):
             if isinstance(view, self.rolemodelview.__class__) and getattr(

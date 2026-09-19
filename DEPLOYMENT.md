@@ -145,3 +145,11 @@ remember to set:
 - **Verify after deploy:** `python scripts/verify_replay_and_encryption.py` (offline part needs
   only Python + Node); set `SUPERSET_URL` / `SUPERSET_TEST_USER` / `SUPERSET_TEST_PASSWORD` for
   the live checks against a *test* account. It waits out the 3-per-minute login limit itself.
+- **JWT API login is now rate limited.** `POST /api/v1/security/login` (used by API clients, e.g.
+  the Angular portals) had no limit at all. It now allows 5 *failed* attempts per minute per
+  client+username (429 after that) and 30 failed per client, via `API_LOGIN_RATE_LIMIT` /
+  `API_LOGIN_IP_RATE_LIMIT` (see `.example`). Successful logins never count. Add the two settings
+  to the live `superset_config.py` to change the defaults. **Ask the portal team to confirm** their
+  login doesn't legitimately fail more than that per minute through one shared IP. It still takes a
+  plain username/password by design (cross-origin clients, CSRF-exempt), so it is the one login
+  that is throttled rather than encrypted.
