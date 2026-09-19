@@ -248,3 +248,69 @@ either of these can go live.
 | #1 / #2 / #3 (disputed) | ⚪ Neither, yet | No action until AAA Technologies provides a reproducible request/response chain — nothing to fix in code or config against what's currently documented. |
 
 **Bottom line:** of the items still genuinely open, code changes are needed for 4 things (#8, #11, #10, residual #13), and everything else — including two issues worse than anything in the original report (weak `SECRET_KEY`, default DB password) — is a same-day config/credential change on the live host, no PR required.
+
+## H. Update 2026‑09‑19 — #1 (Response Replay) reproduced and fixed; #2/#4 given a real application-layer fix
+
+**Correction to earlier sections.** Sections C and G recorded #1 as disputed and, in review
+notes, explained the Burp result as "local response tampering with no server-side effect".
+That was wrong. The auditor's PoC (Steps 1–11) pastes a *genuine* response from an earlier
+successful login — including its genuine, correctly-signed `Set-Cookie: session=…` — into a
+later exchange. The browser stores that cookie and is authenticated again **even though the
+user had logged out in between**. Earlier testing only exercised the cookie issued after a
+*failed* login (which carries no `_user_id` and is worthless); it never replayed a cookie from
+a *successful* login after logout.
+
+**Root cause.** `SESSION_SERVER_SIDE = False`: Superset uses Flask's stateless signed-cookie
+session. Nothing is stored server-side, so logout can only ask the browser to drop its copy.
+Any copy already captured keeps verifying against `SECRET_KEY` until Flask's session lifetime
+ends (31 days by default). CWE‑613, Insufficient Session Expiration.
+
+**Fix (verified live, 2026‑09‑19).**
+- Every login stamps a random `sid` into the session; logout records it in a new
+  `revoked_session` table (`superset/security/session_revocation.py`, migration `a7c3e91b5d24`);
+  the Flask-Login session loader refuses revoked ids (`SupersetSecurityManager._load_session_user`).
+  Cost: one primary-key lookup per authenticated request; rows self-purge after the cookie
+  lifetime.
+- Sessions issued before deploy carry no `sid` and stay valid until they expire (deliberate —
+  no mass logout). `SESSION_REQUIRE_SID = True` retires them (everyone signs in once) and kills any
+  cookie captured before the deploy. Do **not** rotate `SECRET_KEY` for this: it also breaks
+  decryption of saved database connection passwords (an earlier version of this note said to).
+- The classic FAB password forms (`/resetmypassword/form`, `/resetpassword/form`, `/users/add`,
+  `/users/edit/<id>`) posted a plain form field and were still routable; nothing links to them, so
+  they now 404 unless `LEGACY_PASSWORD_FORMS_ENABLED = True`.
+- `POST /api/v1/security/login` (the JWT login used by API clients/the Angular portal) is
+  CSRF-exempt and takes a plain username/password by design, so it can't be encrypted or given a
+  CAPTCHA without changing those clients. It also had **no rate limit** (FAB's `AUTH_RATE_LIMIT` is
+  attached to the web login blueprint only): 8 wrong passwords in a row were all 401. That let a
+  brute-force script bypass the #9 lockout and the #11 CAPTCHA entirely. Now throttled on failed
+  logins only (5/min per client+username, 30/min per client; successes never count).
+- Fails open, with an ERROR log, only if the revocation lookup itself errors (e.g. migration not
+  yet run) — an ops slip must not lock every user out.
+- Bug found and fixed while testing: FAB passes `current_app` (a `LocalProxy`) to
+  `create_login_manager`, so signal receivers registered against it never matched Flask-Login's
+  real-app sender and nothing was stamped or revoked. Unwrapped with `_get_current_object()`.
+
+**#2 / #4 — password no longer appears in the request.** Client-side *hashing* was rejected: the
+server holds scrypt hashes of the raw password, so a client that sends only a hash makes every
+existing account unverifiable (mass lockout). Instead the browser encrypts the password to the
+server's public key (ECDH P‑256 + HKDF‑SHA256 + AES‑256‑GCM, native Web Crypto); the server
+decrypts back to the raw password and runs the *existing* scrypt check. No stored hash changes,
+no migration, no lockout. A single-use server nonce inside the payload stops replay of a captured
+blob. Server key is derived from `SECRET_KEY`, so all workers agree with nothing to provision.
+- Login: `superset/security/login_encryption.py`, `login_captcha.py`, `src/utils/passwordEncryption.ts`
+- Change-my-password (`PUT /api/v1/me/`) and admin create/update user
+  (`/api/v1/security/users/`): `superset/security/password_transport.py`
+  (`enc_password` → `password` in a `before_request` hook, so all validators, the password-history
+  check and hashing run unchanged).
+- Verified: 14 offline crypto checks incl. a blob produced by real Web Crypto (Node) decrypting on
+  the Python side; 19 live checks (login, replay, logout-replay, change password, tamper, wrong
+  nonce); 5 live admin checks (create/update with encrypted password, created user can log in).
+  `scripts/verify_replay_and_encryption.py`.
+- Limits, stated plainly: this is defence in depth on top of TLS, not a replacement. `crypto.subtle`
+  only exists on HTTPS/localhost, so plain-HTTP hosts fall back to the old plaintext field. Set
+  `LOGIN_ALLOW_PLAINTEXT_PASSWORD = False` once verified on the HTTPS host to make the login
+  encrypted-only. Change-password endpoints still accept a plain `password` (API clients, scripts).
+  What this cannot do: hide the password from the user's own machine, which necessarily holds it
+  while it is being typed. What it does change is what leaves the browser — an intercepting proxy
+  such as Burp (which decrypts the tester's own TLS) now shows `enc_password` ciphertext instead
+  of the password, and a captured login/change-password request cannot be replayed.

@@ -33,6 +33,7 @@ from superset.security.password_policy import (
     PasswordReuseError,
     record_password_history,
 )
+from superset.security.password_transport import issue_password_key
 from superset.utils.slack import get_user_avatar, SlackClientError
 from superset.views.base_api import BaseSupersetApi, requires_json, statsd_metrics
 from superset.views.users.schemas import CurrentUserPutSchema, UserResponseSchema
@@ -99,6 +100,46 @@ class CurrentUserRestApi(BaseSupersetApi):
             return self.response_401()
 
         return self.response(200, result=user_response_schema.dump(g.user))
+
+    @expose("/password_key", methods=("GET",))
+    @safe
+    def get_password_key(self) -> Response:
+        """Public key and a single-use nonce for encrypting a password.
+        ---
+        get:
+          summary: Get a password-encryption key and nonce
+          description: >-
+            Returns the server's public key and a fresh single-use nonce bound
+            to the caller's session. The browser encrypts a new password with
+            them and sends it as `enc_password` instead of `password` (audit
+            finding #4). Requires an authenticated session.
+          responses:
+            200:
+              description: Key and nonce
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                          nonce:
+                            type: string
+            401:
+              $ref: '#/components/responses/401'
+        """
+        try:
+            if g.user is None or g.user.is_anonymous:
+                return self.response_401()
+        except NoAuthorizationError:
+            return self.response_401()
+
+        response = self.response(200, result=issue_password_key())
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @expose("/roles/", methods=("GET",))
     @safe

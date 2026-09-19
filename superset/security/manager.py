@@ -23,8 +23,10 @@ import time
 from collections import defaultdict
 from typing import Any, Callable, cast, NamedTuple, Optional, TYPE_CHECKING
 
-from flask import current_app, Flask, g, Request
+from flask import current_app, Flask, g, has_request_context, Request, request
+from flask import session as flask_session
 from flask_appbuilder import Model
+from flask_appbuilder.security.api import SecurityApi
 from flask_appbuilder.security.sqla.apis import RoleApi, UserApi
 from flask_appbuilder.security.sqla.manager import SecurityManager
 from flask_appbuilder.security.sqla.models import (
@@ -45,7 +47,13 @@ from flask_appbuilder.security.views import (
 )
 from flask_appbuilder.widgets import ListWidget
 from flask_babel import lazy_gettext as _
-from flask_login import AnonymousUserMixin, LoginManager
+from flask_login import (
+    AnonymousUserMixin,
+    LoginManager,
+    user_logged_in,
+    user_logged_out,
+)
+from flask_limiter.util import get_remote_address
 from jwt.api_jwt import _jwt_global_obj
 from sqlalchemy import and_, inspect, or_
 from sqlalchemy.engine.base import Connection
@@ -69,6 +77,12 @@ from superset.security.guest_token import (
     GuestUser,
 )
 from superset.security.login_captcha import SupersetAuthDBView
+from superset.security.session_revocation import (
+    is_session_revoked,
+    new_session_id,
+    revoke_session,
+    SESSION_SID_KEY,
+)
 from superset.sql.parse import process_jinja_sql, Table
 from superset.tasks.utils import get_current_user
 from superset.utils import json
@@ -486,7 +500,65 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
     def create_login_manager(self, app: Flask) -> LoginManager:
         lm = super().create_login_manager(app)
         lm.request_loader(self.request_loader)
+        # Audit finding #1 (Response Replay): see
+        # superset/security/session_revocation.py. Only the *session* user
+        # loader is wrapped -- load_user() itself is shared with the JWT
+        # API path and stays untouched.
+        lm.user_loader(self._load_session_user)
+        # FAB hands us `current_app` (a LocalProxy); Flask-Login sends its
+        # signals with the real app object as sender, so connecting against
+        # the proxy would silently never match.
+        real_app = (
+            app._get_current_object()  # pylint: disable=protected-access
+            if hasattr(app, "_get_current_object")
+            else app
+        )
+        user_logged_in.connect(self._stamp_session_id, real_app)
+        user_logged_out.connect(self._revoke_session_id, real_app)
         return lm
+
+    def _load_session_user(self, pk: Any) -> Optional[User]:
+        if has_request_context():
+            sid = flask_session.get(SESSION_SID_KEY)
+            revoked = bool(sid) and is_session_revoked(self.session, sid)
+            # Sessions issued before revocation shipped carry no sid and can
+            # never be revoked; SESSION_REQUIRE_SID retires them (everyone
+            # signs in once), which is what makes a pre-deploy captured
+            # cookie useless too. Off by default so a deploy never logs
+            # anyone out by surprise.
+            unrevocable = not sid and current_app.config.get(
+                "SESSION_REQUIRE_SID", False
+            )
+            if revoked or unrevocable:
+                # Logged out elsewhere, or a legacy cookie: drop the auth
+                # markers so the response also stops re-sending them.
+                for key in ("_user_id", "_fresh", "_id", SESSION_SID_KEY):
+                    flask_session.pop(key, None)
+                return None
+        return self.load_user(pk)
+
+    def _stamp_session_id(self, _sender: Any, **_extra: Any) -> None:
+        # New random id on every login, so a session id from before login
+        # (or from a previous login) is never reused for the authenticated
+        # session. An id this session already carried is retired rather than
+        # left valid behind the new one.
+        previous_sid = flask_session.get(SESSION_SID_KEY)
+        if previous_sid:
+            revoke_session(
+                self.session, previous_sid, current_app.permanent_session_lifetime
+            )
+        flask_session[SESSION_SID_KEY] = new_session_id()
+
+    def _revoke_session_id(self, _sender: Any, **_extra: Any) -> None:
+        # Fired by flask_login.logout_user(), which pops _user_id but leaves
+        # custom keys such as our sid in place.
+        if not has_request_context():
+            return
+        sid = flask_session.pop(SESSION_SID_KEY, None)
+        if sid:
+            revoke_session(
+                self.session, sid, current_app.permanent_session_lifetime
+            )
 
     def request_loader(self, request: Request) -> Optional[User]:
         # pylint: disable=import-outside-toplevel
@@ -3005,6 +3077,55 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
             role.name for role in self.get_user_roles()
         ]
 
+    def _limit_api_login(self) -> None:
+        """Audit findings #9 / #11: POST /api/v1/security/login (the JWT login
+        used by API clients) sat outside the web login's protection -- FAB's
+        AUTH_RATE_LIMIT is attached to the web auth blueprint only, so this
+        endpoint allowed unlimited password guessing (8 failures in a row, all
+        401, never a 429). Its CSRF exemption and plain username/password body
+        are deliberate (cross-origin API clients), so it isn't blocked or given
+        a CAPTCHA; it is throttled instead.
+
+        Only *failed* logins count, so legitimate clients are never slowed. The
+        first limit is per client+username, so one mistyped user behind a shared
+        proxy can't lock out the rest; the second caps failures per client to
+        bound a spray across many usernames. Limits are read per request from
+        API_LOGIN_RATE_LIMIT / API_LOGIN_IP_RATE_LIMIT.
+        """
+        if not self.is_auth_limited:
+            return
+        api = next(
+            (v for v in self.appbuilder.baseviews if isinstance(v, SecurityApi)),
+            None,
+        )
+        if api is None:
+            return
+        login_endpoint = f"{api.blueprint.name}.login"
+
+        def not_the_login_view() -> bool:
+            return request.endpoint != login_endpoint
+
+        def failed_login(response: Any) -> bool:
+            return response.status_code == 401
+
+        def client_and_username() -> str:
+            body = request.get_json(silent=True)
+            name = body.get("username") if isinstance(body, dict) else ""
+            return f"{get_remote_address()}|{str(name or '').strip().lower()[:64]}"
+
+        for scope, key_func, config_key, default in (
+            ("api_login_user", client_and_username, "API_LOGIN_RATE_LIMIT", "5 per minute"),
+            ("api_login_client", get_remote_address, "API_LOGIN_IP_RATE_LIMIT", "30 per minute"),
+        ):
+            self.limiter.limit(
+                (lambda k=config_key, d=default: current_app.config.get(k, d)),
+                key_func=key_func,
+                methods=["POST"],
+                scope=scope,
+                exempt_when=not_the_login_view,
+                deduct_when=failed_login,
+            )(api.blueprint)
+
     # temporal change to remove the roles view from the security menu,
     # after migrating all views to frontend, we will set FAB_ADD_SECURITY_VIEWS = False
     def register_views(self) -> None:
@@ -3016,6 +3137,7 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
         )
 
         super().register_views()
+        self._limit_api_login()
 
         for view in list(self.appbuilder.baseviews):
             if isinstance(view, self.rolemodelview.__class__) and getattr(

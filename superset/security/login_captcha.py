@@ -40,8 +40,18 @@ same zero-dependency, no-image design.
 from __future__ import annotations
 
 import random
+import secrets
 
-from flask import Blueprint, flash, g, jsonify, redirect, request, session
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    request,
+    session,
+)
 from flask_appbuilder._compat import as_unicode
 from flask_appbuilder.security.decorators import no_cache
 from flask_appbuilder.security.forms import LoginForm_db
@@ -50,7 +60,15 @@ from flask_appbuilder.utils.base import get_safe_redirect
 from flask_appbuilder.views import expose
 from flask_login import login_user
 
+from superset.security.login_encryption import (
+    decrypt_login_password,
+    server_public_key,
+)
+
 CAPTCHA_SESSION_KEY = "login_captcha_answer"  # noqa: S105 -- not a credential
+# Single-use nonce that must come back inside the encrypted password (see
+# superset/security/login_encryption.py).
+LOGIN_ENC_NONCE_SESSION_KEY = "login_enc_nonce"  # noqa: S105 -- not a credential
 
 # Excludes 0/O/1/I/L -- easy to mistype/misread as plain text, no image
 # rendering to disambiguate them with a font.
@@ -76,7 +94,17 @@ def get_login_captcha():
     point is only to stop attempts that skip the challenge entirely.)"""
     code = _generate_captcha_code()
     session[CAPTCHA_SESSION_KEY] = code
-    return jsonify({"code": code})
+    payload = {"code": code}
+    if current_app.config.get("LOGIN_PASSWORD_ENCRYPTION", True):
+        # Fresh nonce per challenge; consumed on the next login attempt.
+        nonce = secrets.token_urlsafe(16)
+        session[LOGIN_ENC_NONCE_SESSION_KEY] = nonce
+        payload["key"] = server_public_key(current_app.config["SECRET_KEY"])
+        payload["nonce"] = nonce
+    response = jsonify(payload)
+    # Carries a single-use nonce: a cached copy would hand out a dead one.
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class SupersetAuthDBView(AuthDBView):
@@ -127,6 +155,12 @@ class SupersetAuthDBView(AuthDBView):
                 )
                 return redirect(self.appbuilder.get_url_for_login_with(next_url))
 
+            if not current_app.config.get("LOGIN_ALLOW_PLAINTEXT_PASSWORD", True):
+                # This form-POST path can only ever carry a plaintext
+                # password; once plaintext is disallowed it must not log in.
+                flash(as_unicode(self.invalid_login_message), "warning")
+                return redirect(self.appbuilder.get_url_for_login_with(next_url))
+
             user = self.appbuilder.sm.auth_user_db(
                 form.username.data, form.password.data
             )
@@ -147,10 +181,13 @@ class SupersetAuthDBView(AuthDBView):
         payload = request.get_json(silent=True) or {}
         username = (payload.get("username") or "").strip()
         password = payload.get("password") or ""
+        encrypted_password = payload.get("enc_password")
         submitted_answer = payload.get("captcha_answer") or ""
         next_url = get_safe_redirect(request.args.get("next", ""))
 
+        # Both single-use values are consumed on every attempt, pass or fail.
         expected_answer = session.pop(CAPTCHA_SESSION_KEY, None)
+        expected_nonce = session.pop(LOGIN_ENC_NONCE_SESSION_KEY, None)
         if not _captcha_matches(expected_answer, submitted_answer):
             return (
                 jsonify(
@@ -163,6 +200,25 @@ class SupersetAuthDBView(AuthDBView):
                 ),
                 401,
             )
+
+        invalid_login = (
+            jsonify(
+                {"success": False, "message": as_unicode(self.invalid_login_message)}
+            ),
+            401,
+        )
+        if encrypted_password is not None:
+            # Same response as a wrong password: a bad/replayed/tampered blob
+            # must not be distinguishable from bad credentials.
+            password = decrypt_login_password(
+                current_app.config["SECRET_KEY"],
+                encrypted_password if isinstance(encrypted_password, str) else None,
+                expected_nonce,
+            )
+            if password is None:
+                return invalid_login
+        elif not current_app.config.get("LOGIN_ALLOW_PLAINTEXT_PASSWORD", True):
+            return invalid_login
 
         user = self.appbuilder.sm.auth_user_db(username, password)
         if not user:

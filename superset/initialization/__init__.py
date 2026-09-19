@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import sys
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -835,6 +836,35 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
                 cors_resource_prefixes
             ):
                 abort(404)
+
+        # Audit finding #4: Flask-AppBuilder still registers its classic,
+        # server-rendered password forms. Nothing in the React UI links to
+        # them (password changes go through /api/v1/me/ and
+        # /api/v1/security/users/, which now carry `enc_password`), but they
+        # remain reachable by URL and post the password as a plain form
+        # field -- the same pattern the auditor found on /resetmypassword/form.
+        # 404 rather than 403 so their existence isn't confirmed. Set
+        # LEGACY_PASSWORD_FORMS_ENABLED = True to bring them back.
+        legacy_password_form_paths = re.compile(
+            r"^/(resetmypassword/form|resetpassword/form|users/add|users/edit/[^/]+)/?$"
+        )
+
+        @self.superset_app.before_request
+        def block_legacy_password_forms() -> None:
+            if not self.config.get(
+                "LEGACY_PASSWORD_FORMS_ENABLED", False
+            ) and legacy_password_form_paths.match(request.path):
+                abort(404)
+
+        # Audit finding #4: the change-password / admin set-password endpoints
+        # receive `enc_password`; turn it back into `password` before any view
+        # or schema reads the body. See superset/security/password_transport.py.
+        # pylint: disable=import-outside-toplevel
+        from superset.security.password_transport import (
+            decrypt_password_in_request,
+        )
+
+        self.superset_app.before_request(decrypt_password_in_request)
 
         if self.config["ENABLE_CORS"]:
             # pylint: disable=import-outside-toplevel

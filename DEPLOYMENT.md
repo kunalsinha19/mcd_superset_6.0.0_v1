@@ -119,3 +119,37 @@ remember to set:
   silent no-ops there: `SUPERSET_APP_INITIALIZER` (real hook is
   `FLASK_APP_MUTATOR`) and `EXTRA_CSS`. Worth knowing before assuming
   those are doing anything today, JWT auth aside.
+
+## Session revocation and encrypted passwords (audit #1 / #2 / #4)
+- **New migration `a7c3e91b5d24`** (`revoked_session` table). `entrypoint.sh` already runs
+  `flask db upgrade` on start, so nothing manual -- but if it hasn't run yet the app keeps working
+  (revocation checks fail open and log an ERROR) rather than locking everyone out. Watch the
+  first logs after a deploy for `Session revocation lookup failed`.
+- **What changes for users:** logging out now really invalidates the session cookie. Sessions
+  created *before* this deploy have no id, so they cannot be revoked and would stay valid until
+  they expire (up to 31 days). Add `SESSION_REQUIRE_SID = True` to the live `superset_config.py`
+  (it is on in the `.example`): every user then signs in once after the upgrade, and any cookie
+  captured before the upgrade is dead too. **Never rotate `SECRET_KEY` for this** -- it also breaks
+  decryption of saved database connection passwords (see step 1 above).
+- **Classic password forms are now blocked.** `/resetmypassword/form`, `/resetpassword/form`,
+  `/users/add` and `/users/edit/<id>` return 404 (nothing in the UI links to them; they posted the
+  password as a plain form field). `LEGACY_PASSWORD_FORMS_ENABLED = True` restores them.
+- **Login/change-password now send `enc_password` (ciphertext), not `password`.** The server key
+  is derived from `SECRET_KEY` -- nothing to provision, and all gunicorn workers agree on it.
+  Consequence: **changing `SECRET_KEY` changes the key** (fine -- the page fetches a fresh one on
+  every load).
+- **`crypto.subtle` only exists on HTTPS or localhost.** On a plain-HTTP host the browser falls
+  back to the old plaintext field, so an audit must be run against the HTTPS URL.
+- **To enforce encrypted-only login:** once logins are confirmed working on the HTTPS host, set
+  `LOGIN_ALLOW_PLAINTEXT_PASSWORD = False` in `superset_config.py` (see `.example`).
+- **Verify after deploy:** `python scripts/verify_replay_and_encryption.py` (offline part needs
+  only Python + Node); set `SUPERSET_URL` / `SUPERSET_TEST_USER` / `SUPERSET_TEST_PASSWORD` for
+  the live checks against a *test* account. It waits out the 3-per-minute login limit itself.
+- **JWT API login is now rate limited.** `POST /api/v1/security/login` (used by API clients, e.g.
+  the Angular portals) had no limit at all. It now allows 5 *failed* attempts per minute per
+  client+username (429 after that) and 30 failed per client, via `API_LOGIN_RATE_LIMIT` /
+  `API_LOGIN_IP_RATE_LIMIT` (see `.example`). Successful logins never count. Add the two settings
+  to the live `superset_config.py` to change the defaults. **Ask the portal team to confirm** their
+  login doesn't legitimately fail more than that per minute through one shared IP. It still takes a
+  plain username/password by design (cross-origin clients, CSRF-exempt), so it is the one login
+  that is throttled rather than encrypted.

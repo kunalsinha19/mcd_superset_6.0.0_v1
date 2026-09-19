@@ -70,6 +70,52 @@ RATELIMIT_SWALLOW_ERRORS = True
 RATELIMIT_HEADERS_ENABLED = True
 
 # ---------------------------------------------------------------------
+# Login password encryption (audit findings #2 / #4)
+# ---------------------------------------------------------------------
+# The login page encrypts the password to the server's public key in the
+# browser (ECDH P-256 + AES-256-GCM, native Web Crypto) so the login request
+# never contains it in the clear -- see superset/security/login_encryption.py.
+# The server key is derived from SECRET_KEY, so nothing extra to provision and
+# every gunicorn worker agrees on it. This is defence in depth on top of TLS,
+# not a replacement for it.
+#
+# Set False to stop advertising a key (the login page then sends the password
+# the old way). Only useful for debugging.
+LOGIN_PASSWORD_ENCRYPTION = True
+# While True, a login that carries a plain `password` field is still accepted.
+# That is needed for browsers where Web Crypto doesn't exist (plain-HTTP dev
+# hosts -- crypto.subtle only exists on HTTPS/localhost) and for the classic
+# form-POST fallback. Once you've confirmed logins work on the deployed HTTPS
+# host, set this False to *enforce* encrypted-only logins.
+LOGIN_ALLOW_PLAINTEXT_PASSWORD = True
+
+# Session revocation (audit #1, Response Replay): logout records the session
+# id server-side so a captured cookie stops working. Sessions created before
+# that shipped have no id and can't be revoked. True rejects them, so every
+# user signs in once after the upgrade -- and a cookie an auditor captured
+# before the upgrade is dead too. Do NOT rotate SECRET_KEY to achieve this:
+# it would also break decryption of saved database connection passwords.
+# Safe to leave True permanently; on a brand-new install there are no old
+# sessions, so it changes nothing.
+SESSION_REQUIRE_SID = True
+
+# Flask-AppBuilder's classic server-rendered password forms
+# (/resetmypassword/form, /resetpassword/form, /users/add, /users/edit/<id>)
+# post the password as a plain form field and nothing in the UI links to them
+# (password changes use the encrypted /api/v1 endpoints). Blocked (404) unless
+# this is True.
+LEGACY_PASSWORD_FORMS_ENABLED = False
+
+# POST /api/v1/security/login (the JWT login used by API clients) sits outside
+# AUTH_RATE_LIMIT, which FAB attaches to the web login only -- it used to allow
+# unlimited password guessing. It is throttled on *failed* logins only, so
+# legitimate clients are never slowed: first per client+username, then a wider
+# cap per client to bound a spray across many usernames. Raise these if many
+# users log in through one shared IP (e.g. a server-side proxy) and mistype a lot.
+API_LOGIN_RATE_LIMIT = "5 per minute"
+API_LOGIN_IP_RATE_LIMIT = "30 per minute"
+
+# ---------------------------------------------------------------------
 # HTTPS enforcement + session cookie -- secure by default, on purpose
 # ---------------------------------------------------------------------
 # A real deployment of this app was caught in Burp sending username and
