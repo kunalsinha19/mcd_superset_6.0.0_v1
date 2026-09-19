@@ -518,9 +518,18 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
     def _load_session_user(self, pk: Any) -> Optional[User]:
         if has_request_context():
             sid = flask_session.get(SESSION_SID_KEY)
-            if sid and is_session_revoked(self.session, sid):
-                # Logged out elsewhere: a replayed/captured cookie. Drop the
-                # auth markers so the response also stops re-sending them.
+            revoked = bool(sid) and is_session_revoked(self.session, sid)
+            # Sessions issued before revocation shipped carry no sid and can
+            # never be revoked; SESSION_REQUIRE_SID retires them (everyone
+            # signs in once), which is what makes a pre-deploy captured
+            # cookie useless too. Off by default so a deploy never logs
+            # anyone out by surprise.
+            unrevocable = not sid and current_app.config.get(
+                "SESSION_REQUIRE_SID", False
+            )
+            if revoked or unrevocable:
+                # Logged out elsewhere, or a legacy cookie: drop the auth
+                # markers so the response also stops re-sending them.
                 for key in ("_user_id", "_fresh", "_id", SESSION_SID_KEY):
                     flask_session.pop(key, None)
                 return None

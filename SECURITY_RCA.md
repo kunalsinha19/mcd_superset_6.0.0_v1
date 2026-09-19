@@ -272,7 +272,13 @@ ends (31 days by default). CWE‑613, Insufficient Session Expiration.
   Cost: one primary-key lookup per authenticated request; rows self-purge after the cookie
   lifetime.
 - Sessions issued before deploy carry no `sid` and stay valid until they expire (deliberate —
-  no mass logout). To force them out, rotate `SECRET_KEY` (invalidates everything).
+  no mass logout). `SESSION_REQUIRE_SID = True` retires them (everyone signs in once) and kills any
+  cookie captured before the deploy. Do **not** rotate `SECRET_KEY` for this: it also breaks
+  decryption of saved database connection passwords (an earlier version of this note said to).
+- The classic FAB password forms (`/resetmypassword/form`, `/resetpassword/form`, `/users/add`,
+  `/users/edit/<id>`) posted a plain form field and were still routable; nothing links to them, so
+  they now 404 unless `LEGACY_PASSWORD_FORMS_ENABLED = True`. Still plaintext by design:
+  `POST /api/v1/security/login` (the JWT login used by API clients/the Angular portal).
 - Fails open, with an ERROR log, only if the revocation lookup itself errors (e.g. migration not
   yet run) — an ops slip must not lock every user out.
 - Bug found and fixed while testing: FAB passes `current_app` (a `LocalProxy`) to

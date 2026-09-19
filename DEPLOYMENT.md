@@ -126,8 +126,14 @@ remember to set:
   (revocation checks fail open and log an ERROR) rather than locking everyone out. Watch the
   first logs after a deploy for `Session revocation lookup failed`.
 - **What changes for users:** logging out now really invalidates the session cookie. Sessions
-  created *before* this deploy have no id, so they stay valid until they expire; to force them
-  out immediately, rotate `SECRET_KEY` (logs everyone out).
+  created *before* this deploy have no id, so they cannot be revoked and would stay valid until
+  they expire (up to 31 days). Add `SESSION_REQUIRE_SID = True` to the live `superset_config.py`
+  (it is on in the `.example`): every user then signs in once after the upgrade, and any cookie
+  captured before the upgrade is dead too. **Never rotate `SECRET_KEY` for this** -- it also breaks
+  decryption of saved database connection passwords (see step 1 above).
+- **Classic password forms are now blocked.** `/resetmypassword/form`, `/resetpassword/form`,
+  `/users/add` and `/users/edit/<id>` return 404 (nothing in the UI links to them; they posted the
+  password as a plain form field). `LEGACY_PASSWORD_FORMS_ENABLED = True` restores them.
 - **Login/change-password now send `enc_password` (ciphertext), not `password`.** The server key
   is derived from `SECRET_KEY` -- nothing to provision, and all gunicorn workers agree on it.
   Consequence: **changing `SECRET_KEY` changes the key** (fine -- the page fetches a fresh one on

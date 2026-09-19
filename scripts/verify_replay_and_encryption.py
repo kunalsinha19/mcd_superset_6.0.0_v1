@@ -223,6 +223,11 @@ def part2_online() -> None:
         status, resp = s.call("POST", "/login/", payload, headers)
         return csrf, payload, headers, status, resp, challenge
 
+    for legacy in ("/resetmypassword/form", "/resetpassword/form",
+                   "/users/add", "/users/edit/1"):
+        check(f"classic plaintext password form {legacy} is blocked (404)",
+              Session(base).call("GET", legacy)[0] == 404)
+
     s = Session(base)
     csrf, payload, headers, status, resp, challenge = fresh_login(s)
     check("challenge advertises an encryption key and nonce", "key" in challenge)

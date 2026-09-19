@@ -89,6 +89,23 @@ LOGIN_PASSWORD_ENCRYPTION = True
 # host, set this False to *enforce* encrypted-only logins.
 LOGIN_ALLOW_PLAINTEXT_PASSWORD = True
 
+# Session revocation (audit #1, Response Replay): logout records the session
+# id server-side so a captured cookie stops working. Sessions created before
+# that shipped have no id and can't be revoked. True rejects them, so every
+# user signs in once after the upgrade -- and a cookie an auditor captured
+# before the upgrade is dead too. Do NOT rotate SECRET_KEY to achieve this:
+# it would also break decryption of saved database connection passwords.
+# Safe to leave True permanently; on a brand-new install there are no old
+# sessions, so it changes nothing.
+SESSION_REQUIRE_SID = True
+
+# Flask-AppBuilder's classic server-rendered password forms
+# (/resetmypassword/form, /resetpassword/form, /users/add, /users/edit/<id>)
+# post the password as a plain form field and nothing in the UI links to them
+# (password changes use the encrypted /api/v1 endpoints). Blocked (404) unless
+# this is True.
+LEGACY_PASSWORD_FORMS_ENABLED = False
+
 # ---------------------------------------------------------------------
 # HTTPS enforcement + session cookie -- secure by default, on purpose
 # ---------------------------------------------------------------------
