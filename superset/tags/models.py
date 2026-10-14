@@ -110,12 +110,14 @@ class TaggedObject(Model, AuditMixinNullable):
     __tablename__ = "tagged_object"
     id = Column(Integer, primary_key=True)
     tag_id = Column(Integer, ForeignKey("tag.id"))
-    object_id = Column(
-        Integer,
-        ForeignKey("dashboards.id"),
-        ForeignKey("slices.id"),
-        ForeignKey("saved_query.id"),
-    )
+    # No ForeignKey here: object_id is polymorphic (its meaning depends on
+    # object_type -- a dashboard id, a chart/slice id, or a saved_query id).
+    # Three FKs on this one column were tried previously, but Postgres
+    # enforces all three simultaneously rather than "any one of them" --
+    # that made tagging a dashboard fail unless the same id also happened to
+    # exist in slices AND saved_query, which is why every attempt to tag a
+    # dashboard was rejected with a ForeignKeyViolation.
+    object_id = Column(Integer)
     object_type = Column(Enum(ObjectType))
 
     tag = relationship("Tag", back_populates="objects", overlaps="tags")
