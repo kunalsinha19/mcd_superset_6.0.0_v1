@@ -119,7 +119,10 @@ def _build_header(
         pdf.cell(0, 6, "Filters applied:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font("Helvetica", "", 9)
         for flt in filters:
-            pdf.multi_cell(0, 5, f"  • {flt}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            # "-" not "•" -- the core Helvetica font is latin-1 only, and a
+            # bullet character crashes multi_cell() with
+            # FPDFUnicodeEncodingException on every export that has filters.
+            pdf.multi_cell(0, 5, f"  - {flt}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
 
 
