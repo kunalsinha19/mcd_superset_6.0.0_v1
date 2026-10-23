@@ -348,6 +348,40 @@ class ChartDataRestApi(ChartRestApi):
         result = async_command.run(form_data, get_user_id())
         return self.response(202, **result)
 
+    @staticmethod
+    def _build_filters_text(nested: dict[str, Any]) -> str | None:
+        """
+        Summarize the time range and adhoc/dashboard filters actually
+        applied to this chart request, for display in a PDF export -- a
+        downloaded file with no record of what data it covers (date range,
+        filters) is otherwise ambiguous once separated from the dashboard.
+        """
+        parts: list[str] = []
+
+        time_range = nested.get("time_range") or (
+            nested.get("extra_form_data", {}) or {}
+        ).get("time_range")
+        if time_range and time_range != "No filter":
+            parts.append(f"Time range: {time_range}")
+
+        def _describe(flt: dict[str, Any]) -> str | None:
+            col = flt.get("subject") or flt.get("col")
+            op = flt.get("operator") or flt.get("op")
+            val = flt.get("comparator") or flt.get("val")
+            if col and val not in (None, [], ""):
+                return f"{col} {op or '='} {val}"
+            return None
+
+        for flt in nested.get("adhoc_filters") or []:
+            if isinstance(flt, dict) and (desc := _describe(flt)):
+                parts.append(desc)
+
+        for flt in (nested.get("extra_form_data", {}) or {}).get("filters") or []:
+            if isinstance(flt, dict) and (desc := _describe(flt)):
+                parts.append(desc)
+
+        return "; ".join(parts) if parts else None
+
     def _send_chart_response(  # noqa: C901
         self,
         result: dict[Any, Any],
@@ -378,6 +412,7 @@ class ChartDataRestApi(ChartRestApi):
             # "<chart name>_<timestamp>" naming convention.
             chart_name = "chart"
             dashboard_name = None
+            filters_text = None
             try:
                 import json as _json
                 raw = request.form.get("form_data", "{}")
@@ -395,6 +430,8 @@ class ChartDataRestApi(ChartRestApi):
                     dashboard = DashboardDAO.find_by_id(dashboard_id)
                     if dashboard:
                         dashboard_name = dashboard.dashboard_title
+                if result_format == ChartDataResultFormat.PDF:
+                    filters_text = self._build_filters_text(nested)
             except Exception:
                 chart_name = "chart"
             from datetime import datetime
@@ -417,7 +454,9 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(data))
-                    pdf_bytes = df_to_pdf(df, chart_name, dashboard_name)
+                    pdf_bytes = df_to_pdf(
+                        df, chart_name, dashboard_name, filters_text
+                    )
                     return PdfResponse(
                         pdf_bytes, headers=generate_download_headers("pdf", filename)
                     )
@@ -436,7 +475,7 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(query_data))
-                    return df_to_pdf(df, chart_name, dashboard_name)
+                    return df_to_pdf(df, chart_name, dashboard_name, filters_text)
                 return query_data
 
             files = {
