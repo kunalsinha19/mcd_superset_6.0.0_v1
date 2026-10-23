@@ -81,7 +81,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["gunicorn", \
      "--bind", "0.0.0.0:8088", \
-     "--workers", "4", \
+     "--workers", "128", \
      "--worker-class", "gthread", \
      "--threads", "4", \
      "--timeout", "120", \
