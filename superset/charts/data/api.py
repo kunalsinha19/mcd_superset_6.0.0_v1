@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 # large result set can run past gunicorn's request timeout, which surfaces
 # to the browser as a bare connection/500 error rather than any page
 # content. Cap it and point users at CSV/XLSX for the full data instead.
-PDF_EXPORT_MAX_ROWS = 5000
+PDF_EXPORT_MAX_ROWS = 2000
 
 
 class ChartDataRestApi(ChartRestApi):

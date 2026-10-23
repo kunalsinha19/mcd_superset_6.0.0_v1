@@ -184,6 +184,16 @@ const SliceHeaderControls = (
   const canExplore = props.supersetCanExplore;
   const { canDrillToDetail, canViewQuery, canViewTable } = usePermissions();
 
+  // Keep in sync with PDF_EXPORT_MAX_ROWS in superset/charts/data/api.py --
+  // the backend enforces the real cap, this just disables the button early
+  // instead of letting the user wait on a request that gets truncated.
+  const chartRowCount = useSelector<RootState, number | undefined>(
+    state => state.charts[props.slice.slice_id]?.queriesResponse?.[0]?.rowcount,
+  );
+  const PDF_EXPORT_MAX_ROWS = 2000;
+  const isPdfRowLimitExceeded =
+    typeof chartRowCount === 'number' && chartRowCount > PDF_EXPORT_MAX_ROWS;
+
   const datasetResource = useDatasetDrillInfo(
     props.slice.datasource,
     props.dashboardId,
@@ -551,8 +561,20 @@ const SliceHeaderControls = (
         },
         {
           key: MenuKeys.DownloadAsPdf,
-          label: t('Export to PDF'),
+          label: isPdfRowLimitExceeded ? (
+            <Tooltip
+              title={t(
+                'PDF export is disabled because this chart has more than %s rows. Apply a filter to reduce the row count.',
+                PDF_EXPORT_MAX_ROWS,
+              )}
+            >
+              <span style={{ pointerEvents: 'auto' }}>{t('Export to PDF')}</span>
+            </Tooltip>
+          ) : (
+            t('Export to PDF')
+          ),
           icon: <Icons.FilePdfOutlined css={dropdownIconsStyles} />,
+          disabled: isPdfRowLimitExceeded,
         },
       ],
     });

@@ -39,12 +39,36 @@ _IST = ZoneInfo("Asia/Kolkata")
 _PAGE_WIDTH_MM = 277.0
 _MIN_COL_WIDTH_MM = 18.0
 
+_ATTRIBUTION_TEXT = (
+    "Website Content Managed by Municipal Corporation of Delhi ,Web "
+    "Information Manager Designed, Developed and Hosted by National "
+    "Informatics Center( NIC ), Ministry of Electronics & IT (MeitY)"
+)
+
 
 class _ReportPDF(FPDF):
-    """FPDF with a page-number footer on every page ("Page X of Y")."""
+    """FPDF with a two-line footer on every page: the mandatory
+    attribution line (kept on one line, shrinking its font until it fits
+    rather than wrapping), then the page number."""
 
     def footer(self) -> None:
-        self.set_y(-15)
+        self.set_y(-18)
+
+        # Shrink the font just enough that the whole attribution string
+        # fits on a single line at the page's usable width -- a fixed
+        # font size would either wrap (user explicitly doesn't want that)
+        # or get clipped once the exact string length changes.
+        font_size = 7.0
+        self.set_font("Helvetica", "", font_size)
+        while (
+            self.get_string_width(_ATTRIBUTION_TEXT) > _PAGE_WIDTH_MM
+            and font_size > 4.0
+        ):
+            font_size -= 0.5
+            self.set_font("Helvetica", "", font_size)
+        self.cell(0, 5, _ATTRIBUTION_TEXT, align="C")
+
+        self.set_y(-12)
         self.set_font("Helvetica", "I", 8)
         self.cell(0, 8, f"Page {self.page_no()} of {{nb}}", align="C")
 
@@ -176,7 +200,7 @@ def df_to_pdf(
     def _new_pdf() -> _ReportPDF:
         pdf = _ReportPDF(orientation="L", unit="mm", format="A4")
         pdf.alias_nb_pages()  # resolves "{nb}" in footer() to the final page count
-        pdf.set_auto_page_break(auto=True, margin=18)
+        pdf.set_auto_page_break(auto=True, margin=22)  # room for 2-line footer
         pdf.add_page()
         _build_header(pdf, chart_name, dashboard_name, filters)
         return pdf
