@@ -50,6 +50,11 @@ services:
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-}
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-}
+      # Read by superset_config.py's os.getenv() calls -- lets this stack
+      # point at the isolated postgres service above instead of whatever
+      # literal fallback happens to be in that file, without editing it.
+      SUPERSET_DATABASE_URI: ${SUPERSET_DATABASE_URI:-}
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-}
     volumes:
       # The one file every environment must supply for itself -- never
       # baked into the image. See superset_config.py.example.
