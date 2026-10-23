@@ -32,6 +32,15 @@ _PAGE_WIDTH_MM = 277.0
 _MIN_COL_WIDTH_MM = 18.0
 
 
+class _ReportPDF(FPDF):
+    """FPDF with a page-number footer on every page ("Page X of Y")."""
+
+    def footer(self) -> None:
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.cell(0, 8, f"Page {self.page_no()} of {{nb}}", align="C")
+
+
 def build_pdf_from_screenshots(screenshots: Sequence[bytes]) -> bytes:
     """
     Combine one or more screenshot images (e.g. dashboard/chart PNGs) into
@@ -48,7 +57,10 @@ def build_pdf_from_screenshots(screenshots: Sequence[bytes]) -> bytes:
 
 
 def _build_header(
-    pdf: FPDF, chart_name: str, dashboard_name: str | None, filters_text: str | None
+    pdf: FPDF,
+    chart_name: str,
+    dashboard_name: str | None,
+    filters: list[str] | None,
 ) -> None:
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, chart_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -61,16 +73,21 @@ def _build_header(
     pdf.cell(
         0,
         6,
-        f"Generated: {datetime.now().strftime('%Y-%m-%d')}",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
     )
-    # Applied filters (date range / adhoc / dashboard filters) -- without
-    # this, a downloaded PDF has no record of what data it actually shows.
-    if filters_text:
-        pdf.cell(
-            0, 6, f"Filters: {filters_text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT
-        )
+    # Every applied filter (time range, adhoc, dashboard native filters) on
+    # its own line, via multi_cell so a long one wraps instead of being
+    # silently clipped (plain cell() doesn't wrap). Without this, a
+    # downloaded PDF has no record of what data it actually shows once
+    # separated from the dashboard.
+    if filters:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, "Filters applied:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font("Helvetica", "", 9)
+        for flt in filters:
+            pdf.multi_cell(0, 5, f"  • {flt}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
 
 
@@ -118,14 +135,15 @@ def df_to_pdf(
     df: pd.DataFrame,
     chart_name: str = "chart",
     dashboard_name: str | None = None,
-    filters_text: str | None = None,
+    filters: list[str] | None = None,
 ) -> bytes:
     """
     Render a DataFrame as a text-based (not screenshot) landscape PDF: a
-    header with the chart name, dashboard name, applied filters, and
-    today's date, followed by the data as a table. Column widths and font
-    size scale down as column count grows, so a wide table (many columns)
-    still fits readably instead of wrapping every cell onto its own page.
+    header with the chart name, dashboard name, every applied filter, and
+    today's date, followed by the data as a table, with "Page X of Y" on
+    every page. Column widths and font size scale down as column count
+    grows, so a wide table (many columns) still fits readably instead of
+    wrapping every cell onto its own page.
     """
     num_cols = max(len(df.columns), 1)
     # More columns -> smaller font, so each column keeps enough width to
@@ -147,11 +165,15 @@ def df_to_pdf(
     # as the 500 on large-text exports.
     max_cell_len = max(20, int((_PAGE_WIDTH_MM / num_cols) * 3))
 
-    pdf = FPDF(orientation="L", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    _build_header(pdf, chart_name, dashboard_name, filters_text)
+    def _new_pdf() -> _ReportPDF:
+        pdf = _ReportPDF(orientation="L", unit="mm", format="A4")
+        pdf.alias_nb_pages()  # resolves "{nb}" in footer() to the final page count
+        pdf.set_auto_page_break(auto=True, margin=18)
+        pdf.add_page()
+        _build_header(pdf, chart_name, dashboard_name, filters)
+        return pdf
 
+    pdf = _new_pdf()
     try:
         _render_table(pdf, df, font_size, max_cell_len)
     except Exception:
@@ -163,10 +185,7 @@ def df_to_pdf(
             font_size,
             exc_info=True,
         )
-        pdf = FPDF(orientation="L", unit="mm", format="A4")
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        _build_header(pdf, chart_name, dashboard_name, filters_text)
+        pdf = _new_pdf()
         _render_table(pdf, df, font_size=5, max_cell_len=25)
 
     return bytes(pdf.output())

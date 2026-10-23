@@ -349,12 +349,14 @@ class ChartDataRestApi(ChartRestApi):
         return self.response(202, **result)
 
     @staticmethod
-    def _build_filters_text(nested: dict[str, Any]) -> str | None:
+    def _build_filters_text(nested: dict[str, Any]) -> list[str] | None:
         """
-        Summarize the time range and adhoc/dashboard filters actually
+        List every time range / adhoc / dashboard native filter actually
         applied to this chart request, for display in a PDF export -- a
         downloaded file with no record of what data it covers (date range,
         filters) is otherwise ambiguous once separated from the dashboard.
+        Returns one string per filter (not pre-joined) so the PDF can print
+        each on its own line and none get silently clipped.
         """
         parts: list[str] = []
 
@@ -380,7 +382,7 @@ class ChartDataRestApi(ChartRestApi):
             if isinstance(flt, dict) and (desc := _describe(flt)):
                 parts.append(desc)
 
-        return "; ".join(parts) if parts else None
+        return parts or None
 
     def _send_chart_response(  # noqa: C901
         self,
@@ -412,7 +414,7 @@ class ChartDataRestApi(ChartRestApi):
             # "<chart name>_<timestamp>" naming convention.
             chart_name = "chart"
             dashboard_name = None
-            filters_text = None
+            filters = None
             try:
                 import json as _json
                 raw = request.form.get("form_data", "{}")
@@ -431,7 +433,7 @@ class ChartDataRestApi(ChartRestApi):
                     if dashboard:
                         dashboard_name = dashboard.dashboard_title
                 if result_format == ChartDataResultFormat.PDF:
-                    filters_text = self._build_filters_text(nested)
+                    filters = self._build_filters_text(nested)
             except Exception:
                 chart_name = "chart"
             from datetime import datetime
@@ -454,9 +456,7 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(data))
-                    pdf_bytes = df_to_pdf(
-                        df, chart_name, dashboard_name, filters_text
-                    )
+                    pdf_bytes = df_to_pdf(df, chart_name, dashboard_name, filters)
                     return PdfResponse(
                         pdf_bytes, headers=generate_download_headers("pdf", filename)
                     )
@@ -475,7 +475,7 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(query_data))
-                    return df_to_pdf(df, chart_name, dashboard_name, filters_text)
+                    return df_to_pdf(df, chart_name, dashboard_name, filters)
                 return query_data
 
             files = {
