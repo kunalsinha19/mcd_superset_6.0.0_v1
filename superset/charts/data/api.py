@@ -65,6 +65,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# PDF is generated synchronously inside this request (no Celery job, unlike
+# scheduled reports), by drawing the table row-by-row with fpdf2 -- far
+# heavier per row than writing a CSV/XLSX file. An uncapped export of a
+# large result set can run past gunicorn's request timeout, which surfaces
+# to the browser as a bare connection/500 error rather than any page
+# content. Cap it and point users at CSV/XLSX for the full data instead.
+PDF_EXPORT_MAX_ROWS = 5000
+
 
 class ChartDataRestApi(ChartRestApi):
     include_route_methods = {"get_data", "data", "data_from_cache"}
@@ -384,6 +392,25 @@ class ChartDataRestApi(ChartRestApi):
 
         return parts or None
 
+    @staticmethod
+    def _cap_df_for_pdf(
+        df: Any, filters: list[str] | None
+    ) -> tuple[Any, list[str] | None]:
+        """
+        Cap rows sent into the (synchronous, per-row-heavy) PDF renderer --
+        see PDF_EXPORT_MAX_ROWS. Appends a visible note instead of silently
+        dropping rows, so a truncated export is obvious rather than looking
+        like the data itself was incomplete.
+        """
+        total = len(df)
+        if total <= PDF_EXPORT_MAX_ROWS:
+            return df, filters
+        note = (
+            f"Showing first {PDF_EXPORT_MAX_ROWS:,} of {total:,} rows -- "
+            "download as CSV or Excel for the full data."
+        )
+        return df.head(PDF_EXPORT_MAX_ROWS), [*(filters or []), note]
+
     def _send_chart_response(  # noqa: C901
         self,
         result: dict[Any, Any],
@@ -437,7 +464,14 @@ class ChartDataRestApi(ChartRestApi):
             except Exception:
                 chart_name = "chart"
             from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            from zoneinfo import ZoneInfo
+
+            # Naive datetime.now() is server-local (container clock, not
+            # IST) -- convert explicitly so the filename timestamp matches
+            # the "Generated:" time shown inside PDF exports.
+            timestamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime(
+                "%Y%m%d_%H%M%S"
+            )
             filename = f"{chart_name}_{timestamp}"
 
             if len(result["queries"]) == 1:
@@ -456,6 +490,7 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(data))
+                    df, filters = self._cap_df_for_pdf(df, filters)
                     pdf_bytes = df_to_pdf(df, chart_name, dashboard_name, filters)
                     return PdfResponse(
                         pdf_bytes, headers=generate_download_headers("pdf", filename)
@@ -475,7 +510,10 @@ class ChartDataRestApi(ChartRestApi):
                     from superset.utils.pdf import df_to_pdf
 
                     df = _pd.read_csv(_io.StringIO(query_data))
-                    return df_to_pdf(df, chart_name, dashboard_name, filters)
+                    capped_df, capped_filters = self._cap_df_for_pdf(df, filters)
+                    return df_to_pdf(
+                        capped_df, chart_name, dashboard_name, capped_filters
+                    )
                 return query_data
 
             files = {

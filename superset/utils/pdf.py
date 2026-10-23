@@ -18,6 +18,7 @@ import io
 import logging
 from datetime import datetime
 from typing import Sequence
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fpdf import FPDF
@@ -26,6 +27,13 @@ from fpdf.fonts import FontFace
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# datetime.now() is naive server-local time -- in a container that's
+# whatever the OS clock is set to (normally UTC/GMT), regardless of the
+# CELERY_CONFIG timezone (that setting only governs Celery beat/worker
+# scheduling, not this request-time code). Convert explicitly so the PDF
+# always shows IST no matter what the host clock is.
+_IST = ZoneInfo("Asia/Kolkata")
 
 # A4 landscape usable width in mm (297 page width - 2*10 margin).
 _PAGE_WIDTH_MM = 277.0
@@ -73,7 +81,7 @@ def _build_header(
     pdf.cell(
         0,
         6,
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Generated: {datetime.now(_IST).strftime('%Y-%m-%d %H:%M')} IST",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
     )
