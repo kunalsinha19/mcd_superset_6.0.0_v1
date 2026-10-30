@@ -38,8 +38,21 @@ class SeedSystemThemesCommand(BaseCommand):
         themes_to_seed = []
         if theme_default := app.config.get("THEME_DEFAULT"):
             themes_to_seed.append(("THEME_DEFAULT", theme_default))
+        else:
+            self._remove_system_theme("THEME_DEFAULT")
+
         if theme_dark := app.config.get("THEME_DARK"):
             themes_to_seed.append(("THEME_DARK", theme_dark))
+        else:
+            # Without this, setting THEME_DARK = None in config (the
+            # documented way to force a single theme on everyone) is a
+            # no-op once a dark theme was ever seeded before: this command
+            # only ever upserts, so the stale DB row keeps winning over
+            # the config change every time get_theme_bootstrap_data() runs
+            # (it reads the DB first when ENABLE_UI_THEME_ADMINISTRATION
+            # is on, which it is by default), and viewers with an OS/
+            # browser dark-mode preference keep getting the dark theme.
+            self._remove_system_theme("THEME_DARK")
 
         for theme_name, theme_config in themes_to_seed:
             self._upsert_system_theme(theme_name, theme_config)
@@ -102,6 +115,22 @@ class SeedSystemThemesCommand(BaseCommand):
             )
             db.session.add(new_theme)
             logger.debug(f"Created system theme: {theme_name}")
+
+    @transaction()
+    def _remove_system_theme(self, theme_name: str) -> None:
+        """Remove a system theme that's no longer configured.
+
+        Only ever targets rows matching both theme_name AND is_system, so
+        this can't touch a custom (non-system, admin-created) theme even
+        if it happens to share the name.
+        """
+        deleted = (
+            db.session.query(Theme)
+            .filter(Theme.theme_name == theme_name, Theme.is_system)
+            .delete(synchronize_session=False)
+        )
+        if deleted:
+            logger.debug(f"Removed system theme: {theme_name}")
 
     def validate(self) -> None:
         """Validate that the command can be executed."""
