@@ -1377,6 +1377,47 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                 ),
             )
 
+    # SWAGAM embedding: guest-token (iframe-embedded) viewers were getting
+    # the full Gamma role, including Edit chart / View query / Share on
+    # every chart -- not wanted once SWAGAM calls the dashboard/chart data
+    # APIs directly rather than linking back into Superset's own UI.
+    # Stripping these from Gamma itself would also strip them from Gamma's
+    # own logged-in users, so instead EMBEDDED_ROLE_LIKE mirrors Gamma (or
+    # whichever role is configured) onto a dedicated "Embedded" role with
+    # just these permissions removed, and GUEST_ROLE_NAME points guest
+    # tokens at that role instead of the source one.
+    EMBEDDED_ROLE_DENYLIST = {
+        ("can_explore", "Superset"),  # "Edit chart"
+        ("can_view_query", "Dashboard"),  # "View query" (also shown by can_explore)
+        ("can_share_chart", "Superset"),  # "Share" (per-chart)
+    }
+
+    def _harden_embedded_role(self, role_name: str) -> None:
+        embedded_role = self.find_role(role_name)
+        if not embedded_role:
+            return
+        to_strip = [
+            pvm
+            for pvm in list(embedded_role.permissions)
+            if pvm.permission
+            and pvm.view_menu
+            and (pvm.permission.name, pvm.view_menu.name)
+            in self.EMBEDDED_ROLE_DENYLIST
+        ]
+        for pvm in to_strip:
+            self.del_permission_role(embedded_role, pvm)
+        if to_strip:
+            logger.warning(
+                "Stripped %d permission(s) from the %s role (SWAGAM "
+                "embedding hardening): %s",
+                len(to_strip),
+                embedded_role.name,
+                sorted(
+                    f"{pvm.permission.name}/{pvm.view_menu.name}"
+                    for pvm in to_strip
+                ),
+            )
+
     def sync_role_definitions(self) -> None:
         """
         Initialize the Superset application with security roles and such.
@@ -1402,6 +1443,16 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                 merge=True,
             )
             self._harden_public_role()
+
+        # Configure the embedded (guest-token) role, if set up
+        if get_conf()["EMBEDDED_ROLE_LIKE"]:
+            embedded_role_name = get_conf()["GUEST_ROLE_NAME"] or "Embedded"
+            self.copy_role(
+                get_conf()["EMBEDDED_ROLE_LIKE"],
+                embedded_role_name,
+                merge=True,
+            )
+            self._harden_embedded_role(embedded_role_name)
         self.create_missing_perms()
         self.clean_perms()
 

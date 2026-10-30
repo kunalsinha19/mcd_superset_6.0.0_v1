@@ -384,6 +384,15 @@ AUTH_TYPE = AUTH_DB
 PUBLIC_ROLE_LIKE: str | None = None
 
 # ---------------------------------------------------
+# Mirror a builtin role (typically "Gamma") onto a dedicated "Embedded"
+# role, minus the Edit chart / View query / Share permissions -- so
+# embedded (guest-token) viewers lose those menu items without touching
+# the source role's permissions for its own logged-in users. Set
+# GUEST_ROLE_NAME = "Embedded" alongside this so guest tokens actually
+# resolve to the hardened role instead of the source one.
+EMBEDDED_ROLE_LIKE: str | None = None
+
+# ---------------------------------------------------
 # Babel config for translations
 # ---------------------------------------------------
 # Setup default language
